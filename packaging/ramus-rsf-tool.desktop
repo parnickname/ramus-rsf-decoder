@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Ramus RSF Editor
+GenericName=IDEF0/DFD Model Editor
+Comment=View and edit Ramus (.rsf) IDEF0/DFD model files
+Exec=ramus-rsf-gui %f
+Icon=ramus-rsf-tool
+Terminal=false
+Categories=Office;Graphics;Development;
+MimeType=application/x-ramus-rsf;
+StartupNotify=true

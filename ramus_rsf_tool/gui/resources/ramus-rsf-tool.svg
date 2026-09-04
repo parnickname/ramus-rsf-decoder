@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="20" fill="#20344a"/>
+  <rect x="16" y="24" width="40" height="28" rx="3" fill="#3fae5c" stroke="#123018" stroke-width="2"/>
+  <rect x="72" y="24" width="40" height="28" rx="3" fill="#3fae5c" stroke="#123018" stroke-width="2"/>
+  <rect x="44" y="76" width="40" height="28" rx="3" fill="#3fae5c" stroke="#123018" stroke-width="2"/>
+  <path d="M56 38 H72" stroke="#e8eef5" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M36 52 V70 H64 V76" stroke="#e8eef5" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M92 52 V70 H64" stroke="#e8eef5" stroke-width="3" fill="none"/>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#e8eef5"/>
+    </marker>
+  </defs>
+</svg>

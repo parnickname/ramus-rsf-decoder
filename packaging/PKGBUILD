@@ -1,0 +1,40 @@
+# Maintainer: (unset -- fill in before submitting to the AUR)
+pkgname=ramus-rsf-tool-git
+pkgver=r1.0000000
+pkgrel=1
+pkgdesc="GUI editor and CLI for Ramus (.rsf) IDEF0/DFD model files"
+arch=('any')
+url="https://github.com/parnickname/ramus-rsf-decoder"
+license=('MIT')
+depends=('python' 'python-pyqt6')
+makedepends=('python-build' 'python-installer' 'python-wheel' 'git')
+provides=('ramus-rsf-tool')
+conflicts=('ramus-rsf-tool')
+source=("ramus-rsf-decoder::git+https://github.com/parnickname/ramus-rsf-decoder.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/ramus-rsf-decoder"
+  printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "$srcdir/ramus-rsf-decoder"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "$srcdir/ramus-rsf-decoder"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+
+  install -Dm644 packaging/ramus-rsf-tool.desktop \
+    "$pkgdir/usr/share/applications/ramus-rsf-tool.desktop"
+  install -Dm644 ramus_rsf_tool/gui/resources/ramus-rsf-tool.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/ramus-rsf-tool.svg"
+  install -Dm644 packaging/ramus-rsf-tool-mime.xml \
+    "$pkgdir/usr/share/mime/packages/ramus-rsf-tool.xml"
+  install -Dm644 RAMUS_RSF_FORMAT.md \
+    "$pkgdir/usr/share/doc/ramus-rsf-tool/RAMUS_RSF_FORMAT.md"
+  install -Dm644 README.md \
+    "$pkgdir/usr/share/doc/ramus-rsf-tool/README.md"
+}

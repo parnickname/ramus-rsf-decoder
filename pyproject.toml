@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ramus-rsf-tool"
+version = "1.0.0"
+description = "Reader/writer/editor for Ramus (.rsf) IDEF0/DFD model files, with a Qt GUI"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [
+    { name = "ramus-rsf-tool contributors" },
+]
+classifiers = [
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "PyQt6>=6.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+ramus-rsf-cli = "ramus_rsf_tool.rsf_cli:main"
+
+[project.gui-scripts]
+ramus-rsf-gui = "ramus_rsf_tool.gui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/parnickname/ramus-rsf-decoder"
+
+[tool.setuptools.packages.find]
+include = ["ramus_rsf_tool*"]
+
+[tool.setuptools.package-data]
+ramus_rsf_tool = ["gui/resources/*"]
