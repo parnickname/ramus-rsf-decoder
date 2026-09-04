@@ -34,7 +34,7 @@ been tested by round-tripping and editing the real sample files (details in
 7. [ID allocation and why external edits are safe](#7-id-allocation-and-why-external-edits-are-safe)
 8. [The IDEF0 "function box" attribute set](#8-the-idef0-function-box-attribute-set)
 9. [Decomposition hierarchy (partially understood)](#9-decomposition-hierarchy-partially-understood)
-10. [Known limitation: arrows / sectors](#10-known-limitation-arrows--sectors)
+10. [Drawing new arrows (sectors / streams / crosspoints)](#10-drawing-new-arrows-sectors--streams--crosspoints)
 11. [File-attribute / HTML-text streams](#11-file-attribute--html-text-streams)
 12. [Old-format compatibility (branches/versioning)](#12-old-format-compatibility-branchesversioning)
 13. [The toolkit](#13-the-toolkit)
@@ -526,30 +526,133 @@ substantially more time tracing `NDataPlugin`/`NFunction`/`SectorRefactor`.
   is tracing `NDataPlugin.getRowSet()` / `NFunction` further, or
   instrumenting a real Ramus build.
 
-## 10. Known limitation: arrows / sectors
+## 10. Drawing new arrows (sectors / streams / crosspoints)
 
-IDEF0 arrows (data/resource flows between boxes, tunneled arrows, etc.)
-are modeled through `IDEF0.Sector` / `IDEF0.SectorBorder` /
-`IDEF0.SectorPoint` / `IDEF0.SectorProperties`, plus a "crosspoint" concept
-(`crosspoint_sequence` in `sequences.xml`) and, in at least the 2009-era
-sample file, an "ordinates" concept that doesn't even appear as its own
-table (no `attribute_sector_points.xml` in that file at all — `IDEF0Plugin`
-source shows active migration/cleanup code for an even older
-"`F_QUALIFIER_CROSSPOINT`" scheme, meaning this part of the format visibly
-**changed across Ramus versions**).
+IDEF0 arrows (data/resource flows between boxes, boundary ICOM arrows,
+tunneled arrows, etc.) are modeled through `IDEF0.Sector` /
+`IDEF0.SectorBorder` / `IDEF0.SectorPoint` / `IDEF0.SectorProperties`, plus
+a "crosspoint" concept (`crosspoint_sequence` in `sequences.xml`) and, in
+at least the 2009-era sample file, an "ordinates" concept that doesn't even
+appear as its own table (no `attribute_sector_points.xml` in that file at
+all — `IDEF0Plugin` source shows active migration/cleanup code for an even
+older "`F_QUALIFIER_CROSSPOINT`" scheme, meaning this part of the format
+visibly **changed across Ramus versions**).
+
+**Creating a brand-new arrow is now supported** (`Model.add_arrow()` /
+`Model.add_boundary_arrow()`), unlike in earlier revisions of this
+document. This section previously said doing so safely wasn't practical
+without a running Ramus to test against; that changed once the actual
+Ramus source (github.com/Vitaliy-Yakovchuk/ramus) became fetchable from
+this environment, so the arrow-creation code path itself could be read
+directly instead of re-guessed from the container format alone:
+
+- `idef0-common/.../pb/idef/elements/SectorRefactor.java` — `createNewSector()`
+  is literally "the user just finished dragging a new arrow" in the real
+  GUI; `createMiss()`/`createBorderPoints()` are its helpers.
+- `idef0-common/.../pb/data/negine/{NSector,NSectorBorder,NCrosspoint}.java`,
+  `AbstractCrosspoint.java`, `pb/Crosspoint.java`, `pb/data/SectorBorder.java`
+  — the actual data-model semantics: what a border's `BORDER_TYPE` /
+  `FUNCTION` / `FUNCTION_TYPE` / `CROSSPOINT` fields mean and how a
+  crosspoint links sector borders into a connectivity graph.
+- `idef0-core/.../idef0/IDEF0Plugin.java` — confirms `F_FUNCTION_SECTOR`
+  (declared, real files populate it) is **never actually read anywhere**
+  in the app; `Model.add_arrow()` deliberately leaves it unset rather than
+  guess at a value nothing consults.
+- `com/dsoft/utils/{DataSaver,DataLoader}.java` — the exact binary format
+  of `IDEF0.Sector`'s `VISUAL_ATTRIBUTES` blob (a small custom
+  little-endian serialization of a stroke/font/color, not Java object
+  serialization).
+
+Every piece of that was then **cross-checked against the real, populated
+`attribute_sectors.xml`/`attribute_sector_borders.xml` data in all three
+bundled sample files** — not just read in isolation:
+
+- A Python decoder mirroring `DataLoader`'s exact byte layout was run
+  against real sectors' `VISUAL_ATTRIBUTES` blobs and left **zero leftover
+  bytes**, confirming the format byte-for-byte (stroke: line width, cap,
+  join, dash phase, miter limit, dash array; then font name/size/style;
+  then RGB color).
+- The simplest, most common real arrow shape — a straight box-to-box
+  connection — was isolated and found to be **one `Sector` element with
+  both borders `TYPE_FUNCTION`** (`BORDER_TYPE=-1`, `FUNCTION=<box
+  element id>`, `FUNCTION_TYPE=<side>`, each with its own freshly-minted
+  `CROSSPOINT`); this is what 283 of the 288 arrows in "Enterprise
+  activity.rsf" actually look like.
+- A boundary arrow (one end on a box, one end on the diagram's own edge)
+  was isolated the same way: `BORDER_TYPE` on the boundary end reuses the
+  *same* side encoding as `FUNCTION_TYPE` (confirmed via
+  `MovingPanel.{RIGHT=0,BOTTOM=1,LEFT=2,TOP=3}`, which `SectorRefactor`
+  compares a border's `FUNCTION_TYPE` against directly).
+- Critically: **no unmodified real arrow in any of the three sample files
+  has any `attribute_sector_points.xml` row at all** — meaning Ramus
+  computes a straight/default route between two edge points at *paint
+  time*, and only a manually bent/dragged arrow ends up with stored
+  ordinates. `add_arrow()`/`add_boundary_arrow()` reproduce exactly that
+  unmodified, auto-routed state (no path data written), which is what
+  every arrow starts as.
+- `Model.new_crosspoint_id()` deliberately does **not** trust the
+  persisted `crosspoint_sequence` value the way §7 shows element/
+  qualifier/attribute ids can be trusted to self-heal: reading
+  `NDataPlugin.createCrosspoint()`, Ramus's own crosspoint sequence has no
+  `MAX(existing)`-resync loop the way `IEngineImpl.createElement()` etc.
+  do (confirmed from source) — and indeed the bundled sample file's own
+  `crosspoint_sequence` (`31`) is far below its actual highest used
+  `CROSSPOINT` value (`54927`), almost certainly stale from a
+  pre-migration counter reset. `new_crosspoint_id()` instead derives a
+  safe value from `MAX(CROSSPOINT)` already present in the loaded file's
+  own border data — tested by adding a new arrow to the real, unmodified
+  "Enterprise activity.rsf" and confirming the freshly allocated
+  crosspoint ids don't collide with any of its 260 pre-existing ones.
+- Round-tripped: added arrows survive `Model.save()` → `Model.load()`
+  with every field intact, on both a from-scratch file
+  (`template.new_model()`, which needed `F_SECTORS`/`F_STREAMS` and their
+  attribute set bootstrapped from nothing — see
+  `Model.ensure_arrow_support()`) and the real sample file (which already
+  has them, as every real Ramus file does).
+
+**What's provided:**
+
+- `Model.add_arrow(from_element_id, from_side, to_element_id, to_side, *,
+  name="", tunnel=False)` — a straight arrow directly between two function
+  boxes on the same diagram. `from_side`/`to_side` are `ArrowSide` values
+  (`LEFT`=Input, `TOP`=Control, `RIGHT`=Output, `BOTTOM`=Mechanism, or the
+  `INPUT`/`CONTROL`/`OUTPUT`/`MECHANISM` aliases). Returns the new
+  Stream element id (the arrow's own identity/label).
+- `Model.add_boundary_arrow(element_id, box_side, page_side, *,
+  direction="in", name="", tunnel=False)` — an ICOM arrow between a
+  function box and the diagram page's own edge (entering or leaving the
+  diagram from outside).
+- `Model.ensure_arrow_support()` — bootstraps `F_SECTORS`/`F_STREAMS` and
+  their attribute set on a file that doesn't have them yet (called
+  automatically by the two methods above).
+- `encode_sector_visual_attributes(...)` — build a custom
+  `VISUAL_ATTRIBUTES` blob (line width, cap/join, dash, font, color) if
+  you don't want the verified real-Ramus-default look
+  `add_arrow()`/`add_boundary_arrow()` use otherwise.
+
+**What's still *not* provided, and why:**
+
+- **Multi-segment / bent arrows.** Real files do chain several `Sector`
+  elements into one arrow via a shared `CROSSPOINT` at the join (verified
+  against a real 4-sector stream), so the mechanism is understood, but
+  it wasn't built into a public helper — the routing choices a bend
+  implies (which crosspoint is `TYPE_ONE_IN` vs `TYPE_ONE_OUT`, i.e. which
+  end fans out) go beyond what's needed for the common case and weren't
+  exercised against enough real multi-segment examples to be as confident
+  in as the single-segment shapes above. `Model.table(...)` can still get
+  you there by hand, following the same borders/crosspoint fields.
+- **Linking a function box to its own child decomposition diagram** —
+  unrelated to arrows, still unimplemented; see §9.
+- Still unconfirmed by an actual Ramus GUI render (see §14) — everything
+  above is "matches real saved data and the code that produces it"
+  confidence, not "watched Ramus draw it" confidence.
 
 Columns are fully documented in §6 (`attribute_sectors.xml`,
 `attribute_sector_borders.xml`, `attribute_sector_points.xml`), and the
-generic table API (`Model.table(path)`) can read and edit them like any
-other table — e.g. renaming an arrow's `ALTERNATIVE_TEXT`, or nudging a
-`VISUAL_ATTRIBUTES` blob's owning row is mechanically no different from
-editing a function box. **What is *not* provided is a "draw a new arrow
-from scratch" helper**, because correctly allocating crosspoints/ordinates
-and wiring `SectorBorder.CROSSPOINT` / `FUNCTION` references without a
-running Ramus to cross-check against felt too likely to produce a file
-that *parses* but *renders wrong or crashes the GUI* — worse than clearly
-saying "not supported." If you need this, start from §6 and §10, and
-validate against a real Ramus install as you go.
+generic table API (`Model.table(path)`) can read and edit any of them like
+any other table for anything the helpers above don't cover — e.g. renaming
+an existing arrow's `ALTERNATIVE_TEXT`, or hand-building a multi-segment
+route.
 
 ## 11. File-attribute / HTML-text streams
 
@@ -646,12 +749,23 @@ Built on top of `rsf_core`. Key pieces:
   `set_background`, `set_foreground`, `set_font`, `set_status`, and the
   one-shot `add_function_box(qualifier_id, name, x, y, width, height, ...)`.
 - `argb(r,g,b,a=255)` / `unpack_argb(value)` — color codec from §8.
+- Arrows (§10): `add_arrow(from_element_id, from_side, to_element_id,
+  to_side, name="", tunnel=False)` (box-to-box), `add_boundary_arrow(
+  element_id, box_side, page_side, direction="in", name="", tunnel=False)`
+  (box-to-page-edge), `ensure_arrow_support()` (bootstraps `F_SECTORS`/
+  `F_STREAMS` if the file doesn't have them), `ArrowSide`/`TunnelType`
+  constants, `encode_sector_visual_attributes(...)` for custom arrow
+  styling.
 - `dump_model(model, include_system_qualifiers=False)` — a full,
   JSON-serialisable snapshot of the whole model (every qualifier → every
   element → every resolved attribute), meant for feeding to a human or an
   AI, not as a round-trip edit format.
+- `apply_json_dump(model, data)` — the inverse: patches `dump_model()`-
+  shaped JSON (e.g. hand-edited/redacted) back onto the model, matching
+  qualifiers/elements by id; see `LLM_REDACTION_GUIDE.md` for the exact
+  rules an editor (human or AI) should follow.
 - `Model.table(path)` — escape hatch to any raw table for anything not
-  covered by the semantic helpers (arrows, etc., per §10).
+  covered by the semantic helpers (multi-segment arrows, etc., per §10).
 
 ### `rsf_cli.py` — command-line front-end
 
@@ -712,6 +826,28 @@ m.register_model_root(root_elem, new_qid)
 m.save("new_diagram.rsf")
 ```
 
+### Example: connect two boxes with a new arrow
+
+```python
+from rsf_model import Model, ArrowSide
+
+m = Model.load("MyModel.rsf")
+root = m.find_qualifier("Enterprise activity")
+boxes = {m.elements[eid]["ELEMENT_NAME"]: eid
+         for eid in m.elements_by_qualifier[root]}
+
+# a straight arrow from "Receive Order"'s Output side to "Process Order"'s Input side
+m.add_arrow(boxes["Receive Order"], ArrowSide.OUTPUT,
+            boxes["Process Order"], ArrowSide.INPUT,
+            name="Order")
+
+# a Control arrow entering "Receive Order" from the top of the page
+m.add_boundary_arrow(boxes["Receive Order"], ArrowSide.CONTROL, ArrowSide.TOP,
+                      direction="in", name="Company policy")
+
+m.save("MyModel_with_arrows.rsf")
+```
+
 ## 14. Verification
 
 No JVM/Gradle build of Ramus itself was available in the environment this
@@ -753,12 +889,32 @@ that:
    `argb(0,0,0) == -16777216` — matching the literal integer values seen
    on every function box's `F_BACKGROUND`/`F_FOREGROUND` in the real
    sample files.
+7. **Arrow creation** (§10, added later once the real Ramus source became
+   fetchable from this environment): the arrow-creation Java source was
+   read directly rather than inferred, and every claim built from it was
+   cross-checked against real data the same way as everything else here —
+   a `VISUAL_ATTRIBUTES` blob decoder mirroring the real binary format
+   read real sectors' blobs with zero leftover bytes; the simple box-to-
+   box and box-to-boundary arrow shapes this module produces were
+   isolated from and matched against hundreds of real arrows in
+   "Enterprise activity.rsf"; a new arrow was added to that *unmodified
+   real file* (not just a synthetic one) and its freshly allocated
+   crosspoint ids were confirmed not to collide with any of the file's
+   260 pre-existing ones; and the result round-tripped through
+   save/reload with every field intact, both on that real file and on a
+   from-scratch one via `template.new_model()` (whose `F_SECTORS`/
+   `F_STREAMS` bootstrapping this exercised too, via
+   `ensure_arrow_support()`).
 
 What was **not** verified (clearly flagged inline above too): per-box
-decomposition linking (§9), arrow/sector creation from scratch (§10), and
-the exact byte layout of a populated `Core.HTMLText` stream (§11) — these
-are read/write-capable at the raw-table level but their higher-level
-"is this what Ramus's GUI expects" correctness is unconfirmed.
+decomposition linking (§9), multi-segment/bent arrows and the exact byte
+layout of a populated `Core.HTMLText` stream (§11) — these are read/write-
+capable at the raw-table level but their higher-level "is this what
+Ramus's GUI expects" correctness is unconfirmed. And more broadly: nothing
+in this document, arrows included, has been confirmed by opening the
+result in the actual Ramus GUI (no JVM/Gradle toolchain was available to
+build and run it) — "matches real saved data and the source that produces
+it" is the ceiling of what was verified here.
 
 ## 15. Source-file cross-reference
 
@@ -778,6 +934,11 @@ For anyone who wants to verify or extend this against the source directly
 | IDEF0 system attribute set (`F_*` constants, `checkIDEF0Attributes`) | `idef0-core/src/main/java/com/ramussoft/idef0/IDEF0Plugin.java` |
 | IDEF0 attribute persistents (Rectangle/Color/Font/Status/...) | `idef0-core/src/main/java/com/ramussoft/idef0/attribute/*.java` |
 | GUI-side decomposition/row-set logic (unfinished tracing, §9) | `idef0-common/src/main/java/com/ramussoft/pb/data/negine/NDataPlugin.java`, `NFunction.java` |
+| arrow creation entry point ("user just finished drawing"), §10 | `idef0-common/src/main/java/com/ramussoft/pb/idef/elements/SectorRefactor.java` |
+| sector/border/crosspoint data model, §10 | `idef0-common/src/main/java/com/ramussoft/pb/data/negine/{NSector,NSectorBorder,NCrosspoint}.java`, `pb/data/AbstractCrosspoint.java`, `pb/data/SectorBorder.java`, `pb/Crosspoint.java`, `pb/Sector.java` |
+| box/page-edge side constants (`ArrowSide`), §10 | `idef0-common/src/main/java/com/ramussoft/pb/idef/visual/MovingPanel.java` |
+| `VISUAL_ATTRIBUTES` blob binary format, §10 | `idef0-common/src/main/java/com/dsoft/utils/{DataSaver,DataLoader}.java` |
+| crosspoint id sequence (no resync-from-data, unlike element/etc ids), §7 & §10 | `idef0-core/src/main/java/com/ramussoft/idef0/IDEF0Plugin.java` (`getNextCrosspointId`), `idef0-common/.../negine/NDataPlugin.java` (`createCrosspoint`) |
 | file-extension / launcher plumbing | `local-client/src/main/java/com/ramussoft/local/FilePlugin.java` |
 | real sample files used for verification | `dest/doc/en/Enterprise activity.rsf`, `dest/doc/ru/Model example.rsf`, `dest/doc/ru/Пример модели.rsf` |
 

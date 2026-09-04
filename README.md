@@ -19,10 +19,10 @@ directly; it does not require Ramus or a JVM to be installed.
   tree, edit any attribute with a type-appropriate widget (text, numbers,
   color pickers, font/bounds/status editors, file/HTML-text attachments),
   a generic raw-table spreadsheet editor for anything not specifically
-  modeled (including IDEF0 arrow/sector tables), a live JSON dump viewer/
-  exporter with a matching **redact-and-reimport** flow, and dialogs for
-  creating new elements, new IDEF0 function boxes, and new diagrams cloned
-  from an existing template qualifier.
+  modeled, a live JSON dump viewer/exporter with a matching
+  **redact-and-reimport** flow, and dialogs for creating new elements, new
+  IDEF0 function boxes, **new arrows between boxes (or to/from the page
+  boundary)**, and new diagrams cloned from an existing template qualifier.
 - **`ramus-rsf-cli`** — a scriptable command-line inspector (`dump`,
   `qualifiers`, `elements`, `show`, `tables`, `table`, `rename`,
   `import-json`).
@@ -45,9 +45,10 @@ directly; it does not require Ramus or a JVM to be installed.
   in the file is unreachable, even attribute types with no dedicated
   widget, via the Raw Tables tab.
 - Structural edits: add/delete/rename elements, add new qualifiers, add
-  IDEF0 function boxes with full visual attributes in one dialog, clone an
-  existing diagram's attribute set to start a new one, register a new
-  diagram as a top-level model root.
+  IDEF0 function boxes with full visual attributes in one dialog, **draw
+  new arrows between two boxes or between a box and the diagram
+  boundary**, clone an existing diagram's attribute set to start a new
+  one, register a new diagram as a top-level model root.
 - JSON export of the whole model (or just user-visible qualifiers) for
   scripting, review, or feeding to other tools.
 - **Export, redact, re-import**: export the JSON dump, edit/redact the
@@ -149,7 +150,7 @@ ramus_rsf_tool/
       field_widgets.py     generic per-SQL-type widget builders
       raw_table_view.py    generic spreadsheet editor (the "Raw Tables" tab)
       json_dump.py         JSON dump viewer/editor tab (export, redact, re-import)
-      dialogs.py           New Element / New Function Box / Clone Qualifier / ...
+      dialogs.py           New Element / New Function Box / New Arrow / Clone Qualifier / ...
       common.py            ColorButton and small shared helpers
 tests/                pytest suite (format round-trips, model edits, GUI smoke tests)
 packaging/            PKGBUILD, .desktop launcher, MIME type, icon reference
@@ -173,11 +174,13 @@ isn't needed when a real display is available.
 Inherited from the underlying format reverse-engineering (see
 `RAMUS_RSF_FORMAT.md` for details):
 
-- **Drawing a brand-new IDEF0 arrow from scratch is not supported.**
-  Existing arrow/sector data (`IDEF0.Sector`/`SectorBorder`/`SectorPoint`)
-  can be viewed and edited via the Raw Tables tab, but the crosspoint/
-  ordinate allocation needed to safely synthesize a *new* arrow wasn't
-  fully recovered from static analysis (section 10).
+- **Multi-segment (bent) arrows** aren't exposed by a helper -- `Edit >
+  New Arrow…`/`Model.add_arrow()`/`add_boundary_arrow()` create a
+  straight, auto-routed arrow between two boxes or between a box and the
+  diagram boundary (matching real Ramus data byte-for-byte, verified
+  against real sample files and the actual Ramus arrow-drawing source --
+  section 10), which covers the common case. Bending an arrow, or editing
+  one with more than one segment, still needs the Raw Tables tab.
   - **Linking a function box to its own child decomposition diagram** is
     not exposed; only registering a *new top-level model root* is
     (section 9).

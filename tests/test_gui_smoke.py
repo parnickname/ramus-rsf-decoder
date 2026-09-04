@@ -17,7 +17,8 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from ramus_rsf_tool.gui.main_window import MainWindow  # noqa: E402
-from ramus_rsf_tool.rsf_model import Model  # noqa: E402
+from ramus_rsf_tool.gui.widgets.dialogs import NewArrowDialog  # noqa: E402
+from ramus_rsf_tool.rsf_model import Model, ArrowSide  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -189,3 +190,101 @@ def test_json_dump_invalid_json_shows_error_without_crashing(app):
         win.json_panel._apply_text()
     mock_critical.assert_called_once()
     assert win.dirty == dirty_before  # invalid JSON must not touch the model
+
+
+def test_new_arrow_dialog_box_to_box(app):
+    win = MainWindow()
+    win.new_file()
+    root = win.model.find_qualifier("Root Diagram")
+    b1 = win.model.add_function_box(root, "Box A", 40, 40, 140, 80)
+    b2 = win.model.add_function_box(root, "Box B", 300, 40, 140, 80)
+    win._after_structural_edit(root, b2)
+
+    dlg = NewArrowDialog(win.model, root, b1, b2, win)
+    dlg.name_edit.setText("GUI Arrow")
+    v = dlg.result_values()
+    assert v == dict(kind="arrow", from_element_id=b1, from_side=ArrowSide.INPUT,
+                      to_element_id=b2, to_side=ArrowSide.INPUT,
+                      name="GUI Arrow", tunnel=False)
+
+    stream_eid = win.model.add_arrow(v["from_element_id"], v["from_side"],
+                                      v["to_element_id"], v["to_side"],
+                                      name=v["name"], tunnel=v["tunnel"])
+    win._after_structural_edit(win.model.find_stream_qualifier(), stream_eid)
+    app.processEvents()
+
+    sect_qid = win.model.find_sector_qualifier()
+    assert len(win.model.elements_by_qualifier[sect_qid]) == 1
+    assert win.dirty
+
+
+def test_new_arrow_dialog_boundary_mode(app):
+    win = MainWindow()
+    win.new_file()
+    root = win.model.find_qualifier("Root Diagram")
+    b1 = win.model.add_function_box(root, "Box A", 40, 40, 140, 80)
+
+    dlg = NewArrowDialog(win.model, root, b1, None, win)
+    dlg.to_picker.boundary_radio.setChecked(True)
+    idx = dlg.to_picker.page_side_combo.findData(ArrowSide.TOP)
+    dlg.to_picker.page_side_combo.setCurrentIndex(idx)
+    v = dlg.result_values()
+    assert v["kind"] == "boundary"
+    assert v["element_id"] == b1
+    assert v["page_side"] == ArrowSide.TOP
+    assert v["direction"] == "out"
+
+    stream_eid = win.model.add_boundary_arrow(
+        v["element_id"], v["box_side"], v["page_side"],
+        direction=v["direction"], name=v["name"], tunnel=v["tunnel"])
+    win._after_structural_edit(win.model.find_stream_qualifier(), stream_eid)
+    app.processEvents()
+    assert win.dirty
+
+
+def test_new_arrow_dialog_rejects_boundary_to_boundary(app):
+    win = MainWindow()
+    win.new_file()
+    root = win.model.find_qualifier("Root Diagram")
+    win.model.add_function_box(root, "Box A", 40, 40, 140, 80)
+
+    dlg = NewArrowDialog(win.model, root, None, None, win)
+    dlg.from_picker.boundary_radio.setChecked(True)
+    dlg.to_picker.boundary_radio.setChecked(True)
+    with patch.object(QMessageBox, "warning", return_value=None) as mock_warn:
+        dlg._on_accept()
+    mock_warn.assert_called_once()
+
+
+def test_action_new_arrow_end_to_end(app):
+    """Drives MainWindow.action_new_arrow() itself (not just the dialog),
+    with QDialog.exec patched to simulate the user accepting it."""
+    win = MainWindow()
+    win.new_file()
+    root = win.model.find_qualifier("Root Diagram")
+    b1 = win.model.add_function_box(root, "Box A", 40, 40, 140, 80)
+    b2 = win.model.add_function_box(root, "Box B", 300, 40, 140, 80)
+    win._after_structural_edit(root, b1)
+    win.tree.select_element(root, b1)
+    win._on_tree_selection(root, b1)
+
+    from PyQt6.QtWidgets import QDialog
+
+    captured = {}
+
+    def fake_exec(self):
+        captured["dlg"] = self
+        self.to_picker.elem_combo.setCurrentIndex(self.to_picker.elem_combo.findData(b2))
+        return QDialog.DialogCode.Accepted
+
+    with patch.object(NewArrowDialog, "exec", fake_exec):
+        win.action_new_arrow()
+    app.processEvents()
+
+    sect_qid = win.model.find_sector_qualifier()
+    assert sect_qid is not None
+    assert len(win.model.elements_by_qualifier[sect_qid]) == 1
+    seid = win.model.elements_by_qualifier[sect_qid][0]
+    attrs = win.model.element_attributes(seid)
+    assert attrs["F_SECTOR_BORDER_START"]["FUNCTION"] == b1
+    assert attrs["F_SECTOR_BORDER_END"]["FUNCTION"] == b2

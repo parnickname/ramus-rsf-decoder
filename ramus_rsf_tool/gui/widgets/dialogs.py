@@ -1,15 +1,16 @@
 """Modal dialogs for structural edits: new element/qualifier, new function
-box, clone-qualifier-as-diagram, register model root."""
+box, clone-qualifier-as-diagram, register model root, new arrow."""
 from __future__ import annotations
 
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QDialog, QFormLayout, QVBoxLayout, QLineEdit, QComboBox, QSpinBox,
-    QDoubleSpinBox, QDialogButtonBox, QCheckBox, QLabel, QMessageBox,
+    QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
+    QSpinBox, QDoubleSpinBox, QDialogButtonBox, QCheckBox, QLabel,
+    QMessageBox, QWidget, QGroupBox, QRadioButton, QButtonGroup,
 )
 
-from ...rsf_model import Model, argb
+from ...rsf_model import Model, argb, ArrowSide
 from .common import ColorButton
 
 
@@ -210,6 +211,168 @@ class RegisterModelRootDialog(QDialog):
 
     def result_values(self):
         return self.qual_combo.currentData()
+
+
+_BOX_SIDES = [
+    ("Input (left)", ArrowSide.INPUT),
+    ("Control (top)", ArrowSide.CONTROL),
+    ("Output (right)", ArrowSide.OUTPUT),
+    ("Mechanism (bottom)", ArrowSide.MECHANISM),
+]
+_PAGE_SIDES = [
+    ("Left edge", ArrowSide.LEFT),
+    ("Top edge", ArrowSide.TOP),
+    ("Right edge", ArrowSide.RIGHT),
+    ("Bottom edge", ArrowSide.BOTTOM),
+]
+
+
+class EndpointPicker(QGroupBox):
+    """One end of a new arrow: either a side of a function box in the
+    current diagram, or a side of the diagram page itself (a boundary
+    arrow, entering/leaving the page from outside)."""
+
+    def __init__(self, title: str, model: Model, qualifier_id: int,
+                 default_element: Optional[int] = None, parent=None):
+        super().__init__(title, parent)
+        self.model = model
+        self.qualifier_id = qualifier_id
+        layout = QVBoxLayout(self)
+
+        self.box_radio = QRadioButton("Function box:")
+        self.boundary_radio = QRadioButton("Diagram page boundary:")
+        self.box_radio.setChecked(True)
+        group = QButtonGroup(self)
+        group.addButton(self.box_radio)
+        group.addButton(self.boundary_radio)
+
+        box_row = QHBoxLayout()
+        self.elem_combo = QComboBox()
+        for eid in model.elements_by_qualifier.get(qualifier_id, []):
+            name = model.elements[eid].get("ELEMENT_NAME") or "(unnamed)"
+            self.elem_combo.addItem("%s (%d)" % (name, eid), eid)
+        if default_element is not None:
+            idx = self.elem_combo.findData(default_element)
+            if idx >= 0:
+                self.elem_combo.setCurrentIndex(idx)
+        self.box_side_combo = QComboBox()
+        for label, value in _BOX_SIDES:
+            self.box_side_combo.addItem(label, value)
+        box_row.addWidget(self.box_radio)
+        box_row.addWidget(self.elem_combo, 1)
+        box_row.addWidget(self.box_side_combo)
+
+        boundary_row = QHBoxLayout()
+        self.page_side_combo = QComboBox()
+        for label, value in _PAGE_SIDES:
+            self.page_side_combo.addItem(label, value)
+        boundary_row.addWidget(self.boundary_radio)
+        boundary_row.addWidget(self.page_side_combo)
+        boundary_row.addStretch(1)
+
+        layout.addLayout(box_row)
+        layout.addLayout(boundary_row)
+
+        self.box_radio.toggled.connect(self._sync_enabled)
+        self._sync_enabled()
+
+    def _sync_enabled(self):
+        is_box = self.box_radio.isChecked()
+        self.elem_combo.setEnabled(is_box)
+        self.box_side_combo.setEnabled(is_box)
+        self.page_side_combo.setEnabled(not is_box)
+
+    def is_boundary(self) -> bool:
+        return self.boundary_radio.isChecked()
+
+    def element_and_side(self):
+        return self.elem_combo.currentData(), self.box_side_combo.currentData()
+
+    def page_side(self):
+        return self.page_side_combo.currentData()
+
+
+class NewArrowDialog(QDialog):
+    """Add a new IDEF0 arrow (Model.add_arrow() / add_boundary_arrow()):
+    box-to-box, or box-to-page-boundary in either direction."""
+
+    def __init__(self, model: Model, qualifier_id: int,
+                 default_from: Optional[int] = None,
+                 default_to: Optional[int] = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("New arrow")
+        self.model = model
+        self.qualifier_id = qualifier_id
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.name_edit = QLineEdit()
+        self.tunnel_check = QCheckBox("Tunneled (not shown at parent/child level)")
+        form.addRow("Label (optional):", self.name_edit)
+        form.addRow("", self.tunnel_check)
+        layout.addLayout(form)
+
+        self.from_picker = EndpointPicker("From", model, qualifier_id, default_from)
+        self.to_picker = EndpointPicker("To", model, qualifier_id, default_to)
+        layout.addWidget(self.from_picker)
+        layout.addWidget(self.to_picker)
+
+        note = QLabel(
+            "Both boxes must be on the same diagram. Geometry is left for "
+            "Ramus to auto-route, matching how every unmodified arrow in a "
+            "real file looks -- see RAMUS_RSF_FORMAT.md section 10.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #888;")
+        layout.addWidget(note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                                    QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _on_accept(self):
+        if self.from_picker.is_boundary() and self.to_picker.is_boundary():
+            QMessageBox.warning(self, "Not supported",
+                                 "An arrow can't run from the page boundary "
+                                 "straight to the page boundary -- at least "
+                                 "one end must be a function box.")
+            return
+        if not self.from_picker.is_boundary() and self.from_picker.element_and_side()[0] is None:
+            QMessageBox.warning(self, "No elements", "This diagram has no boxes yet.")
+            return
+        if not self.to_picker.is_boundary() and self.to_picker.element_and_side()[0] is None:
+            QMessageBox.warning(self, "No elements", "This diagram has no boxes yet.")
+            return
+        self.accept()
+
+    def result_values(self):
+        """Returns a dict ready to drive Model.add_arrow()/
+        add_boundary_arrow(): either {'kind': 'arrow', 'from_element_id',
+        'from_side', 'to_element_id', 'to_side', 'name', 'tunnel'} or
+        {'kind': 'boundary', 'element_id', 'box_side', 'page_side',
+        'direction', 'name', 'tunnel'}."""
+        name = self.name_edit.text()
+        tunnel = self.tunnel_check.isChecked()
+        from_boundary = self.from_picker.is_boundary()
+        to_boundary = self.to_picker.is_boundary()
+
+        if not from_boundary and not to_boundary:
+            from_eid, from_side = self.from_picker.element_and_side()
+            to_eid, to_side = self.to_picker.element_and_side()
+            return dict(kind="arrow", from_element_id=from_eid, from_side=from_side,
+                        to_element_id=to_eid, to_side=to_side, name=name, tunnel=tunnel)
+
+        if from_boundary:
+            page_side = self.from_picker.page_side()
+            box_eid, box_side = self.to_picker.element_and_side()
+            direction = "in"
+        else:
+            page_side = self.to_picker.page_side()
+            box_eid, box_side = self.from_picker.element_and_side()
+            direction = "out"
+        return dict(kind="boundary", element_id=box_eid, box_side=box_side,
+                    page_side=page_side, direction=direction, name=name, tunnel=tunnel)
 
 
 class AboutDialog(QDialog):

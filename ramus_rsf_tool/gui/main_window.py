@@ -19,7 +19,7 @@ from .widgets.raw_table_view import RawTablesPanel
 from .widgets.json_dump import JsonDumpPanel
 from .widgets.dialogs import (
     NewElementDialog, NewQualifierDialog, NewFunctionBoxDialog,
-    CloneQualifierDialog, RegisterModelRootDialog, AboutDialog,
+    CloneQualifierDialog, RegisterModelRootDialog, NewArrowDialog, AboutDialog,
 )
 
 
@@ -117,8 +117,11 @@ class MainWindow(QMainWindow):
         act_clone_qual.triggered.connect(self.action_clone_qualifier)
         act_register_root = QAction("Register Model &Root…", self)
         act_register_root.triggered.connect(self.action_register_root)
+        act_new_arrow = QAction("New &Arrow…", self)
+        act_new_arrow.triggered.connect(self.action_new_arrow)
         edit_menu.addAction(act_new_qual)
         edit_menu.addAction(act_new_fbox)
+        edit_menu.addAction(act_new_arrow)
         edit_menu.addAction(act_clone_qual)
         edit_menu.addAction(act_register_root)
 
@@ -134,6 +137,7 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
         toolbar.addAction(act_add_elem)
         toolbar.addAction(act_new_fbox)
+        toolbar.addAction(act_new_arrow)
         self.addToolBar(toolbar)
 
     # -- model plumbing ------------------------------------------------
@@ -339,6 +343,38 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Cannot create function box", str(ex))
                 return
             self._after_structural_edit(v["qualifier_id"], eid)
+
+    def action_new_arrow(self):
+        if not self._require_model():
+            return
+        qid = self._current_qid
+        if qid is None or not self.model.elements_by_qualifier.get(qid):
+            # fall back to any non-system qualifier that actually has boxes
+            qid = next((q for q, els in self.model.elements_by_qualifier.items()
+                        if els and not self.model.qualifiers.get(q, {}).get("QUALIFIER_SYSTEM")),
+                       None)
+        if qid is None:
+            QMessageBox.information(self, "No boxes",
+                                     "Add at least one function box first "
+                                     "(Edit > New Function Box).")
+            return
+        dlg = NewArrowDialog(self.model, qid, self._current_eid, None, self)
+        if dlg.exec():
+            v = dlg.result_values()
+            try:
+                if v["kind"] == "arrow":
+                    stream_eid = self.model.add_arrow(
+                        v["from_element_id"], v["from_side"],
+                        v["to_element_id"], v["to_side"],
+                        name=v["name"], tunnel=v["tunnel"])
+                else:
+                    stream_eid = self.model.add_boundary_arrow(
+                        v["element_id"], v["box_side"], v["page_side"],
+                        direction=v["direction"], name=v["name"], tunnel=v["tunnel"])
+            except (KeyError, ValueError) as ex:
+                QMessageBox.critical(self, "Cannot create arrow", str(ex))
+                return
+            self._after_structural_edit(self.model.find_stream_qualifier(), stream_eid)
 
     def action_clone_qualifier(self):
         if not self._require_model():

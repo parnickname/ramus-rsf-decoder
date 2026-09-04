@@ -126,6 +126,126 @@ def _key_cols(mode: str) -> List[str]:
     return ["ATTRIBUTE_ID", "ELEMENT_ID"]
 
 
+# --------------------------------------------------------------------------
+# IDEF0 arrows -- side/tunnel constants and the Sector VISUAL_ATTRIBUTES
+# blob codec.
+#
+# Everything here was verified against the real Ramus GPL-3.0 source
+# (idef0-common: SectorRefactor.java, PaintSector.java, NSector.java,
+# NSectorBorder.java, NCrosspoint.java, AbstractCrosspoint.java,
+# Crosspoint.java, DataSaver.java/DataLoader.java; idef0-core:
+# IDEF0Plugin.java) cross-checked against the real attribute_sectors.xml/
+# attribute_sector_borders.xml data in all three sample .rsf files bundled
+# with that repository. See RAMUS_RSF_FORMAT.md section 10 for the full
+# write-up, including what's *not* covered here (mainly: multi-segment/
+# bent arrows and manually-repositioned arrows, which additionally use
+# the SectorPoint table this module doesn't populate).
+# --------------------------------------------------------------------------
+
+class ArrowSide:
+    """Which edge of a function box -- or, for a boundary arrow, of the
+    diagram page itself -- a sector border touches. Values match
+    com.ramussoft.pb.idef.visual.MovingPanel's side constants exactly:
+    confirmed from source, SectorRefactor.java compares a border's
+    FUNCTION_TYPE directly against MovingPanel.RIGHT/LEFT. Standard IDEF0
+    usage: LEFT=Input, TOP=Control, RIGHT=Output, BOTTOM=Mechanism."""
+    RIGHT = 0
+    BOTTOM = 1
+    LEFT = 2
+    TOP = 3
+
+    OUTPUT = RIGHT
+    MECHANISM = BOTTOM
+    INPUT = LEFT
+    CONTROL = TOP
+
+
+class TunnelType:
+    """Values for a SectorBorder's TUNNEL_SOFT column (from
+    com.ramussoft.pb.Crosspoint's constants -- the column name is
+    misleading; it holds one of these four, not a plain soft/hard flag).
+    SOFT/SIMPLE_SOFT are IDEF0's tunnel notation: the "(" ")" bracket
+    marks meaning an ICOM arrow isn't shown at the parent or child level."""
+    HARD = 0
+    SOFT = 1
+    NONE = 2
+    SIMPLE_SOFT = 3
+
+
+def _va_bool(v: bool) -> bytes:
+    return bytes([1 if v else 0])
+
+
+def _va_int(v: int) -> bytes:
+    return int(v).to_bytes(4, "little", signed=True)
+
+
+def _va_double(v: float) -> bytes:
+    import struct as _struct
+    return _struct.pack("<d", float(v))
+
+
+def _va_string(s: Optional[str]) -> bytes:
+    if s is None:
+        return _va_int(-1)
+    data = s.encode("utf-8")
+    return _va_int(len(data)) + data
+
+
+def encode_sector_visual_attributes(
+        *, line_width: float = 1.5, cap: int = 2, join: int = 0,
+        dash_phase: float = 0.0, miter_limit: float = 10.0,
+        dash: Optional[List[float]] = None,
+        font_name: str = "Dialog", font_size: int = 10, font_style: int = 0,
+        color: Tuple[int, int, int] = (0, 0, 0)) -> bytes:
+    """Build an IDEF0.Sector VISUAL_ATTRIBUTES blob, matching the exact
+    binary format `com.dsoft.utils.DataSaver.saveStroke/saveFont/
+    saveColor` write (a small custom little-endian serialization, not
+    Java's built-in object serialization). Defaults reproduce a real
+    Ramus-drawn default arrow byte-for-byte (verified by decoding a real
+    sample sector's blob with the mirrored reader and finding zero
+    leftover bytes) -- Dialog 10pt plain, black, a 1.5pt stroke with
+    CAP_SQUARE/JOIN_MITER and miter limit 10, which are Ramus's
+    DEFAULT_ARROW_FONT/DEFAULT_ARROW_COLOR/DEFAULT_ARROW_STROKE options.
+
+    An *empty* blob is also valid -- PaintSector.loadVisuals() special-
+    cases a 0-length VISUAL_ATTRIBUTES and falls back to the same
+    defaults -- but this gives you the literal bytes a real "just drawn,
+    never restyled" arrow has, and lets you customize line width/font/
+    color if you want to."""
+    out = bytearray()
+    # stroke: saveBoolean(true) "is BasicStroke" + fields + dash array
+    out += _va_bool(True)
+    out += _va_double(line_width)
+    out += _va_int(cap)
+    out += _va_int(join)
+    out += _va_double(dash_phase)
+    out += _va_double(miter_limit)
+    if dash:
+        out += _va_int(len(dash))
+        for d in dash:
+            out += _va_double(d)
+    else:
+        out += _va_int(-1)
+    # font: saveBoolean(false) "not null" + saveBoolean(true) "new, not cached"
+    out += _va_bool(False)
+    out += _va_bool(True)
+    out += _va_string(font_name)
+    out += _va_int(font_size)
+    out += _va_int(font_style)
+    # color: saveBoolean(true) "new, not cached"
+    out += _va_bool(True)
+    out += _va_int(color[0])
+    out += _va_int(color[1])
+    out += _va_int(color[2])
+    return bytes(out)
+
+
+# A real Ramus-drawn default arrow's exact VISUAL_ATTRIBUTES bytes (see
+# encode_sector_visual_attributes()'s docstring) -- computed once at
+# import time from that same function so it's provably consistent with it.
+_DEFAULT_SECTOR_VISUAL_ATTRIBUTES = encode_sector_visual_attributes()
+
 class Model:
     """Semantic view over an RsfArchive. Construct with Model(archive) or
     Model.load(path)."""
@@ -605,6 +725,311 @@ class Model:
     def find_base_functions_qualifier(self) -> Optional[int]:
         return self.find_qualifier("F_BASE_FUNCTIONS")
 
+    # -- generic list-attribute helpers ---------------------------------
+    # TYPE_MAP's 'list' mode (Core.OtherElement, Core.Hierarchical, ...)
+    # has no single "set" -- rows are appended/removed directly. These
+    # two cover the common shapes generically (any qualifier/attribute,
+    # not just arrows) rather than requiring callers to poke at
+    # model.table(path) by hand for every one-to-many link.
+
+    def add_other_element_link(self, element_id: int, attribute_id: int,
+                                other_element_id: int) -> None:
+        """Append one row to a Core.OtherElement-typed (list-mode)
+        attribute -- e.g. linking a sector to its owning stream. Does not
+        check for an existing identical row; call multiple times to add
+        multiple links."""
+        atype = self.attribute_type(attribute_id)
+        if atype != ("Core", "OtherElement"):
+            raise TypeError("Attribute %s is not Core.OtherElement (got %r)"
+                             % (attribute_id, atype))
+        info = TYPE_MAP[atype]
+        t = self._get_or_create_vtable(info.table_path, atype)
+        t.rows.append({"ATTRIBUTE_ID": attribute_id, "ELEMENT_ID": element_id,
+                        "OTHER_ELEMENT": other_element_id})
+
+    def add_hierarchical_link(self, element_id: int, attribute_id: int, *,
+                               parent_element_id: int = -1,
+                               previous_element_id: Optional[int] = None,
+                               icon_id: int = -1) -> None:
+        """Append one row to a Core.Hierarchical-typed (list-mode)
+        attribute, used for the tree/order bookkeeping every browsable
+        qualifier's element list carries (RAMUS_RSF_FORMAT.md section 6).
+        `previous_element_id=None` (the default) auto-fills it with
+        whichever element was most recently added under `element_id`'s
+        own qualifier (or -1, "no previous sibling", if it's the first),
+        matching the ordering real Ramus files use.
+
+        Note this attribute id is commonly *shared* across many
+        qualifiers (every real sample file reuses one global
+        "HierarchicalAttribute" id everywhere) -- its physical table has
+        no qualifier column, so auto-fill deliberately scopes the search
+        to `element_id`'s qualifier's own elements rather than the whole
+        table, or it could pick a same-attribute row that happens to
+        belong to a completely unrelated qualifier."""
+        atype = self.attribute_type(attribute_id)
+        if atype != ("Core", "Hierarchical"):
+            raise TypeError("Attribute %s is not Core.Hierarchical (got %r)"
+                             % (attribute_id, atype))
+        if previous_element_id is None:
+            qid = self.element_qualifier(element_id)
+            previous_element_id = self._last_hierarchical_sibling(attribute_id, qid)
+        info = TYPE_MAP[atype]
+        t = self._get_or_create_vtable(info.table_path, atype)
+        t.rows.append({"ATTRIBUTE_ID": attribute_id, "ELEMENT_ID": element_id,
+                        "ICON_ID": icon_id, "PARENT_ELEMENT_ID": parent_element_id,
+                        "PREVIOUS_ELEMENT_ID": previous_element_id})
+
+    def _last_hierarchical_sibling(self, attribute_id: int, qualifier_id: Optional[int]) -> int:
+        info = TYPE_MAP[("Core", "Hierarchical")]
+        t = self._vtable_or_none(info.table_path)
+        if t is None:
+            return -1
+        siblings = set(self.elements_by_qualifier.get(qualifier_id, []))
+        rows = [r for r in t.find_rows(ATTRIBUTE_ID=attribute_id, PARENT_ELEMENT_ID=-1)
+                if r.get("ELEMENT_ID") in siblings]
+        if not rows:
+            return -1
+        # The tail of the sibling chain is whichever top-level row's
+        # ELEMENT_ID nothing else references as *its* PREVIOUS_ELEMENT_ID.
+        referenced_as_previous = {r.get("PREVIOUS_ELEMENT_ID") for r in rows}
+        tails = [r["ELEMENT_ID"] for r in rows
+                 if r["ELEMENT_ID"] not in referenced_as_previous]
+        return tails[-1] if tails else rows[-1]["ELEMENT_ID"]
+
+    # -- IDEF0 arrows (sectors / streams / crosspoints) -------------------
+    # See the "IDEF0 arrows" section further down this file for the
+    # verified data model this implements, and RAMUS_RSF_FORMAT.md
+    # section 10 for the write-up.
+
+    def find_sector_qualifier(self) -> Optional[int]:
+        return self.find_qualifier("F_SECTORS")
+
+    def find_stream_qualifier(self) -> Optional[int]:
+        return self.find_qualifier("F_STREAMS")
+
+    def new_crosspoint_id(self) -> int:
+        """A fresh crosspoint id guaranteed not to collide with any
+        already used in this file.
+
+        Unlike element/qualifier/attribute ids (RAMUS_RSF_FORMAT.md
+        section 7), Ramus's own crosspoint id source is a plain SQL
+        sequence with **no** resync-from-existing-data safety net --
+        confirmed from source: `NDataPlugin.createCrosspoint()` calls
+        `IDEF0Plugin.getNextCrosspointId()` -> `engine.nextValue(
+        "crosspoint_sequence")` directly, unlike `IEngineImpl.
+        createElement()` et al., which loop against `MAX(id)` before
+        accepting a sequence value. Consequently the `crosspoint_sequence`
+        entry persisted in a file's `data/sequences.xml` cannot be
+        trusted on its own -- in the bundled real sample file it's `31`
+        while actual `CROSSPOINT` values already in use run past `54000`
+        (almost certainly stale from a pre-migration counter reset; see
+        RAMUS_RSF_FORMAT.md section 12 on this file format's history of
+        migrations). This method sidesteps the whole question the same
+        way `new_element_id()` etc. do: derive a safe value directly
+        from `MAX(CROSSPOINT already in this file's own border data)`."""
+        info = TYPE_MAP[("IDEF0", "SectorBorder")]
+        t = self._vtable_or_none(info.table_path)
+        if t is None:
+            return 1
+        return t.max_int("CROSSPOINT") + 1
+
+    def ensure_arrow_support(self) -> Tuple[int, int]:
+        """Make sure this file has the F_SECTORS/F_STREAMS system
+        qualifiers and their standard attribute set that arrows need,
+        creating them if this file doesn't have them yet (e.g. one
+        started from `template.new_model()`). Every real Ramus file
+        already has these (confirmed against all three bundled samples),
+        so on a real file this is a no-op that just looks them up.
+        Returns (sector_qualifier_id, stream_qualifier_id)."""
+        sect_qid = self.find_sector_qualifier()
+        stream_qid = self.find_stream_qualifier()
+        if sect_qid is not None and stream_qid is not None:
+            return sect_qid, stream_qid
+
+        if self.t_qualifiers is None or self.t_attributes is None or \
+                self.t_qual_attrs is None:
+            raise RuntimeError("This file is missing one of data/qualifiers.xml, "
+                                "data/attributes.xml, data/qualifiers_attributes.xml")
+
+        def _get_or_add_attribute(name: str, plugin: str, type_name: str) -> int:
+            existing = self.attribute_id_by_name.get(name)
+            if existing:
+                return existing[0]
+            aid = self.new_attribute_id()
+            self.t_attributes.rows.append({
+                "ATTRIBUTE_ID": aid, "ATTRIBUTE_NAME": name,
+                "ATTRIBUTE_TYPE_PLUGIN_NAME": plugin, "ATTRIBUTE_TYPE_NAME": type_name,
+                "ATTRIBUTE_TYPE_COMPARABLE": False, "ATTRIBUTE_SYSTEM": True,
+            })
+            self.attributes[aid] = self.t_attributes.rows[-1]
+            self.attribute_id_by_name.setdefault(name, []).append(aid)
+            return aid
+
+        def _attach(qid: int, aid: int, pos: int) -> None:
+            self.t_qual_attrs.rows.append({
+                "QUALIFIER_ID": qid, "ATTRIBUTE_ID": aid,
+                "ATTRIBUTE_SYSTEM": True, "ATTRIBUTE_POSITION": pos,
+            })
+            self.qualifier_attribute_ids.setdefault(qid, []).append(aid)
+
+        hierarchical_aid = _get_or_add_attribute("HierarchicalAttribute", "Core", "Hierarchical")
+
+        if sect_qid is None:
+            sect_qid = self.new_qualifier_id()
+            self.t_qualifiers.rows.append({
+                "QUALIFIER_ID": sect_qid, "QUALIFIER_NAME": "F_SECTORS",
+                "QUALIFIER_SYSTEM": True, "ATTRIBUTE_FOR_NAME": -1,
+            })
+            self.qualifiers[sect_qid] = self.t_qualifiers.rows[-1]
+            self.elements_by_qualifier.setdefault(sect_qid, [])
+            aid_sector = _get_or_add_attribute("F_SECTOR_ATTRIBUTE", "IDEF0", "Sector")
+            aid_border_start = _get_or_add_attribute("F_SECTOR_BORDER_START", "IDEF0", "SectorBorder")
+            aid_border_end = _get_or_add_attribute("F_SECTOR_BORDER_END", "IDEF0", "SectorBorder")
+            aid_func_sector = _get_or_add_attribute("F_FUNCTION_SECTOR", "Core", "OtherElement")
+            aid_sector_stream = _get_or_add_attribute("F_SECTOR_STREAM", "Core", "OtherElement")
+            for pos, aid in enumerate((aid_sector_stream, hierarchical_aid, aid_sector,
+                                        aid_border_start, aid_border_end, aid_func_sector)):
+                _attach(sect_qid, aid, pos)
+
+        if stream_qid is None:
+            aid_stream_name = _get_or_add_attribute("F_STREAM_NAME", "Core", "Text")
+            stream_qid = self.new_qualifier_id()
+            self.t_qualifiers.rows.append({
+                "QUALIFIER_ID": stream_qid, "QUALIFIER_NAME": "F_STREAMS",
+                "QUALIFIER_SYSTEM": True, "ATTRIBUTE_FOR_NAME": aid_stream_name,
+            })
+            self.qualifiers[stream_qid] = self.t_qualifiers.rows[-1]
+            self.elements_by_qualifier.setdefault(stream_qid, [])
+            aid_stream_added = _get_or_add_attribute("F_STREAM_ADDED", "IDEF0", "AnyToAny")
+            for pos, aid in enumerate((aid_stream_added, hierarchical_aid, aid_stream_name)):
+                _attach(stream_qid, aid, pos)
+
+        return sect_qid, stream_qid
+
+    def _new_sector(self, stream_eid: int, sect_qid: int,
+                     start: Dict[str, Any], end: Dict[str, Any]) -> int:
+        aid_sector = self.find_attribute(sect_qid, "F_SECTOR_ATTRIBUTE")
+        aid_border_start = self.find_attribute(sect_qid, "F_SECTOR_BORDER_START")
+        aid_border_end = self.find_attribute(sect_qid, "F_SECTOR_BORDER_END")
+        aid_sector_stream = self.find_attribute(sect_qid, "F_SECTOR_STREAM")
+        aid_hierarchical = self.find_attribute(sect_qid, "HierarchicalAttribute")
+
+        sector_eid = self.add_element(sect_qid, name="")
+        # Matches every simple (non-bent, non-manually-repositioned) real
+        # sector's IDEF0.Sector row exactly (RAMUS_RSF_FORMAT.md section 10):
+        # unlabeled, "not yet text-positioned" (CREATE_POS -1.0), and using
+        # a real Ramus-drawn arrow's exact default look (see
+        # _DEFAULT_SECTOR_VISUAL_ATTRIBUTES).
+        self.set_value(sector_eid, aid_sector, {
+            "ALTERNATIVE_TEXT": "", "CREATE_POS": -1.0, "CREATE_STATE": 0,
+            "SHOW_TEXT": 1, "VISUAL_ATTRIBUTES": _DEFAULT_SECTOR_VISUAL_ATTRIBUTES,
+        })
+        self.set_value(sector_eid, aid_border_start, start)
+        self.set_value(sector_eid, aid_border_end, end)
+        if aid_sector_stream is not None:
+            self.add_other_element_link(sector_eid, aid_sector_stream, stream_eid)
+        if aid_hierarchical is not None:
+            self.add_hierarchical_link(sector_eid, aid_hierarchical)
+        return sector_eid
+
+    def _new_stream(self, stream_qid: int, name: str) -> int:
+        aid_name = self.find_attribute(stream_qid, "F_STREAM_NAME")
+        aid_hierarchical = self.find_attribute(stream_qid, "HierarchicalAttribute")
+        stream_eid = self.add_element(stream_qid, name="")
+        if aid_name is not None:
+            self.set_value(stream_eid, aid_name, name)
+        if aid_hierarchical is not None:
+            self.add_hierarchical_link(stream_eid, aid_hierarchical)
+        return stream_eid
+
+    def _border(self, *, border_type: int = -1, crosspoint: int = -1,
+                function: int = -1, function_type: int = -1,
+                tunnel: int = TunnelType.HARD) -> Dict[str, Any]:
+        return {"BORDER_TYPE": border_type, "CROSSPOINT": crosspoint,
+                "FUNCTION": function, "FUNCTION_TYPE": function_type,
+                "TUNNEL_SOFT": tunnel}
+
+    def add_arrow(self, from_element_id: int, from_side: int,
+                  to_element_id: int, to_side: int, *,
+                  name: str = "", tunnel: bool = False) -> int:
+        """Create a new, straight IDEF0 arrow directly connecting two
+        function boxes' edges (one Sector, both borders TYPE_FUNCTION) --
+        the common case, matching 283 of the 288 arrows in the bundled
+        'Enterprise activity.rsf' sample byte-for-byte in shape. Both
+        boxes must be on the same diagram (same qualifier); this does not
+        check that, since nothing in the format itself requires it, but
+        Ramus's own GUI never draws one otherwise.
+
+        `from_side`/`to_side` are `ArrowSide` values (which edge of each
+        box the arrow touches -- LEFT=Input, TOP=Control, RIGHT=Output,
+        BOTTOM=Mechanism in standard IDEF0 usage). `tunnel=True` marks
+        both ends with a soft tunnel (the "(" ")" bracket marks meaning
+        "not shown at the parent/child level").
+
+        Geometry note: like every other unmodified real arrow in the
+        sample files, this deliberately stores *no* explicit path
+        (no SectorPoint rows) -- Ramus computes a straight-line/default
+        route between the two box edges at paint time. Only an arrow a
+        user has manually dragged/bent in the real GUI ends up with
+        stored ordinates; this function reproduces the *unmodified,
+        auto-routed* state, which is what every arrow starts as.
+
+        Returns the id of the new Stream element (the arrow's own
+        identity -- rename it via set_value(stream_id,
+        find_attribute(stream_qualifier_id, "F_STREAM_NAME"), ...) or
+        just pass `name` here)."""
+        sect_qid, stream_qid = self.ensure_arrow_support()
+        tt = TunnelType.SOFT if tunnel else TunnelType.HARD
+        stream_eid = self._new_stream(stream_qid, name)
+        # Two fresh crosspoints, one per border -- new_crosspoint_id()
+        # derives from what's already committed to the file, so the
+        # second call here would return the *same* id as the first
+        # (nothing's been written yet); allocate the pair explicitly
+        # instead of calling it twice.
+        cp_from = self.new_crosspoint_id()
+        cp_to = cp_from + 1
+        start = self._border(function=from_element_id, function_type=from_side,
+                              crosspoint=cp_from, tunnel=tt)
+        end = self._border(function=to_element_id, function_type=to_side,
+                            crosspoint=cp_to, tunnel=tt)
+        self._new_sector(stream_eid, sect_qid, start, end)
+        return stream_eid
+
+    def add_boundary_arrow(self, element_id: int, box_side: int, page_side: int, *,
+                            direction: str = "in", name: str = "",
+                            tunnel: bool = False) -> int:
+        """Create a new IDEF0 boundary arrow: one Sector connecting a
+        function box's edge to the diagram page's own edge -- an
+        Input/Control/Output/Mechanism arrow entering or leaving the
+        diagram from outside it. Matches real boundary-arrow sectors in
+        the bundled sample byte-for-byte in shape (e.g. sectors 116/118/
+        120/124 in 'Enterprise activity.rsf').
+
+        `box_side` is where it touches the box (`ArrowSide`); `page_side`
+        is which edge of the page it touches (also an `ArrowSide` value --
+        the same RIGHT/BOTTOM/LEFT/TOP encoding is reused for the page
+        border, confirmed against real data). `direction="in"` (default)
+        draws it flowing from the page boundary into the box (typical for
+        Input/Control/Mechanism); `direction="out"` flows from the box out
+        to the boundary (typical for Output).
+
+        Returns the new Stream element id, as add_arrow() does."""
+        if direction not in ("in", "out"):
+            raise ValueError("direction must be 'in' or 'out'")
+        sect_qid, stream_qid = self.ensure_arrow_support()
+        tt = TunnelType.SOFT if tunnel else TunnelType.HARD
+        stream_eid = self._new_stream(stream_qid, name)
+        cp_boundary = self.new_crosspoint_id()
+        cp_box = cp_boundary + 1
+        boundary = self._border(border_type=page_side, crosspoint=cp_boundary, tunnel=tt)
+        box = self._border(function=element_id, function_type=box_side,
+                            crosspoint=cp_box, tunnel=tt)
+        if direction == "in":
+            self._new_sector(stream_eid, sect_qid, boundary, box)
+        else:
+            self._new_sector(stream_eid, sect_qid, box, boundary)
+        return stream_eid
+
 
 # --------------------------------------------------------------------------
 # Color helpers
@@ -630,6 +1055,8 @@ def unpack_argb(value: int) -> Tuple[int, int, int, int]:
     g = (v >> 8) & 0xFF
     b = v & 0xFF
     return (r, g, b, a)
+
+
 
 
 # --------------------------------------------------------------------------
