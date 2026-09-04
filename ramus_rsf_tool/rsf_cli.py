@@ -27,6 +27,16 @@ Usage:
     ramus-rsf-cli rename FILE.rsf ELEMENT_ID NEW_NAME OUT.rsf
         Rename one element's Name attribute and save to OUT.rsf.
 
+    ramus-rsf-cli import-json FILE.rsf DUMP.json OUT.rsf
+        Apply a (possibly hand-edited/redacted) `dump` JSON file back onto
+        FILE.rsf as a patch -- matches qualifiers/elements by id and only
+        updates scalar/struct attribute values that actually changed;
+        never adds or removes anything (see rsf_model.apply_json_dump()).
+        Saves the result to OUT.rsf. Typical redaction workflow:
+            ramus-rsf-cli dump FILE.rsf --all --pretty > dump.json
+            $EDITOR dump.json                      # redact sensitive text
+            ramus-rsf-cli import-json FILE.rsf dump.json FILE.redacted.rsf
+
     ramus-rsf-cli gui [FILE.rsf]
         Launch the graphical editor (equivalent to running ramus-rsf-gui).
 
@@ -35,7 +45,7 @@ This module can also be run directly: `python3 -m ramus_rsf_tool.rsf_cli ...`
 import json
 import sys
 
-from .rsf_model import Model, dump_model
+from .rsf_model import Model, dump_model, apply_json_dump
 
 
 def _json(obj, pretty=False):
@@ -103,6 +113,19 @@ def cmd_rename(args):
     print("Renamed element %d -> %r, saved to %s" % (eid, new_name, out))
 
 
+def cmd_import_json(args):
+    path, json_path, out = args[0], args[1], args[2]
+    m = Model.load(path)
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    result = apply_json_dump(m, data)
+    m.save(out)
+    print(result.summary())
+    print("Saved to %s" % out)
+    for w in result.warnings:
+        print("warning: %s" % w, file=sys.stderr)
+
+
 def cmd_gui(args):
     from .gui.app import main as gui_main
     gui_main(args)
@@ -116,6 +139,7 @@ COMMANDS = {
     "tables": cmd_tables,
     "table": cmd_table,
     "rename": cmd_rename,
+    "import-json": cmd_import_json,
     "gui": cmd_gui,
 }
 

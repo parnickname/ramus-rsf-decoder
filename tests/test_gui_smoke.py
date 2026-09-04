@@ -3,8 +3,10 @@ Headless GUI smoke test. Requires PyQt6 and a Qt platform plugin; runs
 against the "offscreen" platform so it works under Xvfb or with no
 display at all (CI). Skipped automatically if PyQt6 isn't installed.
 """
+import json
 import os
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -12,9 +14,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from ramus_rsf_tool.gui.main_window import MainWindow  # noqa: E402
+from ramus_rsf_tool.rsf_model import Model  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -130,3 +133,59 @@ def test_list_mode_attribute_row_builds_without_error(app):
     win._on_tree_selection(root, eid)
     app.processEvents()
     assert win.attr_panel.form.rowCount() == 9
+
+
+def test_json_dump_export_redact_reimport_save_workflow(app):
+    """The exact workflow this feature exists for: export JSON, redact
+    text in it, apply the redacted JSON, then save the .rsf."""
+    win = MainWindow()
+    win.new_file()
+    root = win.model.find_qualifier("Root Diagram")
+    eid = win.model.add_function_box(root, "Alice Johnson - sensitive", 0, 0, 10, 10)
+    win._after_structural_edit(root, eid)
+
+    # "Export" (the box already reflects the model; this is what Export
+    # to file... would write)
+    win.json_panel.set_model(win.model)
+    win.json_panel.refresh()
+    exported = win.json_panel.text.toPlainText()
+    assert "Alice Johnson - sensitive" in exported
+
+    # redact, then paste the redacted text back into the box
+    redacted = exported.replace("Alice Johnson - sensitive", "[REDACTED]")
+    win.json_panel.text.setPlainText(redacted)
+
+    # "Apply edited text below" (Import from file... does the same after
+    # loading the file's contents into the box)
+    with patch.object(QMessageBox, "exec", return_value=None):
+        win.json_panel._apply_text()
+    app.processEvents()
+
+    assert win.model.elements[eid]["ELEMENT_NAME"] == "[REDACTED]"
+    assert win.dirty
+    win.tree.select_element(root, eid)
+    assert win.tree.currentItem().text(0) == "[REDACTED]"
+
+    # save the resulting .rsf and confirm the redaction persisted
+    fd, path = tempfile.mkstemp(suffix=".rsf")
+    os.close(fd)
+    try:
+        win._save_to(path)
+        assert not win.dirty
+        m2 = Model.load(path)
+        assert m2.element_attributes(eid)["Name"] == "[REDACTED]"
+    finally:
+        os.unlink(path)
+
+
+def test_json_dump_invalid_json_shows_error_without_crashing(app):
+    win = MainWindow()
+    win.new_file()
+    win.json_panel.set_model(win.model)
+    win.json_panel.text.setPlainText("{ not valid json")
+    dirty_before = win.dirty  # new_file() itself already marks the window dirty
+
+    with patch.object(QMessageBox, "critical", return_value=None) as mock_critical:
+        win.json_panel._apply_text()
+    mock_critical.assert_called_once()
+    assert win.dirty == dirty_before  # invalid JSON must not touch the model

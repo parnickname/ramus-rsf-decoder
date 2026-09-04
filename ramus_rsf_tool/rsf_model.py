@@ -27,7 +27,7 @@ routing" tables).
 from __future__ import annotations
 
 import posixpath
-from dataclasses import dataclass
+from dataclasses import dataclass, field as _dataclass_field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .rsf_core import RsfArchive, Table, Field, NULL, parse_rsf_date, format_rsf_date
@@ -712,3 +712,175 @@ def _json_safe(d: Any) -> Any:
     if isinstance(d, bytes):
         return {"__bytes_len__": len(d)}
     return d
+
+
+# --------------------------------------------------------------------------
+# Re-importing a (possibly hand-edited/redacted) JSON dump
+#
+# dump_model() is explicitly documented as "not an edit-and-save-back
+# format" -- this is the deliberately narrow exception: a *patch*
+# operation intended for the "export JSON, redact/edit text values,
+# re-import" workflow (and the GUI's JSON Dump tab), not a general
+# import/replace. See apply_json_dump()'s docstring for exactly what it
+# will and won't touch.
+# --------------------------------------------------------------------------
+
+@dataclass
+class ImportResult:
+    qualifiers_updated: int = 0
+    elements_updated: int = 0
+    values_updated: int = 0
+    warnings: List[str] = _dataclass_field(default_factory=list)
+
+    def summary(self) -> str:
+        return ("%d qualifier name(s), %d element(s) (%d value(s) total) updated; "
+                "%d warning(s)." % (self.qualifiers_updated, self.elements_updated,
+                                     self.values_updated, len(self.warnings)))
+
+
+def apply_json_dump(model: Model, data: Dict[str, Any]) -> ImportResult:
+    """Apply a dump_model()-shaped JSON structure back onto `model` as a
+    patch, not a replace:
+
+    - Qualifiers and elements in `data` are matched against this file by
+      id. An id that isn't found here is skipped and reported in
+      `ImportResult.warnings` -- nothing is ever added.
+    - Conversely, a qualifier/element that exists in `model` but is
+      simply absent from `data` (e.g. it was dumped with
+      include_system_qualifiers=False, or its whole block was deleted
+      while redacting) is left completely alone -- nothing is ever
+      removed. This function only patches values of things present in
+      *both*.
+    - Only scalar and struct attribute values (and each element's/
+      qualifier's plain "name") are written back, and only where the new
+      value actually differs from the current one -- matching what
+      dump_model() actually captures. List-valued attributes and the
+      `{"__bytes_len__": n}` placeholders dump_model() emits in place of
+      real bytes (stream/blob-valued attributes) are left untouched and
+      reported as warnings; edit those via the Raw Tables view instead
+      (RAMUS_RSF_FORMAT.md sections 10-11).
+
+    A no-op re-import (JSON unchanged from what was just exported)
+    reports zero updates.
+    """
+    result = ImportResult()
+    for q in data.get("qualifiers", []):
+        qid = q.get("id")
+        if qid not in model.qualifiers:
+            result.warnings.append("Qualifier %r not found in this file; skipped." % (qid,))
+            continue
+        new_qname = q.get("name")
+        if isinstance(new_qname, str) and new_qname != model.qualifiers[qid].get("QUALIFIER_NAME"):
+            model.qualifiers[qid]["QUALIFIER_NAME"] = new_qname
+            result.qualifiers_updated += 1
+        for e in q.get("elements", []):
+            eid = e.get("id")
+            if eid not in model.elements:
+                result.warnings.append("Element %r (qualifier %r) not found; skipped." % (eid, qid))
+                continue
+            if model.elements[eid].get("QUALIFIER_ID") != qid:
+                result.warnings.append(
+                    "Element %r is no longer under qualifier %r; skipped." % (eid, qid))
+                continue
+            if _apply_element_dump(model, qid, eid, e, result):
+                result.elements_updated += 1
+    return result
+
+
+def _resolve_attribute_key(model: Model, qid: int, key: str) -> Optional[int]:
+    """Reverse of the key dump_model()/element_attributes() used: the
+    attribute's own name, or 'attr_<id>' when it had none/a name clash."""
+    if key.startswith("attr_") and key[5:].isdigit():
+        aid = int(key[5:])
+        if aid in model.qualifier_attribute_ids.get(qid, []):
+            return aid
+        return None
+    return model.find_attribute(qid, key)
+
+
+def _apply_element_dump(model: Model, qid: int, eid: int, e: Dict[str, Any],
+                         result: ImportResult) -> bool:
+    changed = False
+    attrs = e.get("attributes") or {}
+    name_attr_id = model.find_attribute(qid, "Name")
+
+    for key, new_value in attrs.items():
+        aid = _resolve_attribute_key(model, qid, key)
+        if aid is None:
+            result.warnings.append(
+                "Attribute %r not found on qualifier %r (element %r); skipped." % (key, qid, eid))
+            continue
+        atype = model.attribute_type(aid)
+        info = TYPE_MAP.get(atype)
+        if info is None:
+            result.warnings.append(
+                "No known editor for attribute %r (element %r); skipped." % (key, eid))
+            continue
+
+        if info.mode == "list":
+            result.warnings.append(
+                "Attribute %r is list-valued; edit it via the Raw Tables view "
+                "instead (element %r)." % (key, eid))
+            continue
+        if info.mode == "stream":
+            result.warnings.append(
+                "Attribute %r is file/stream-valued; the JSON dump doesn't carry "
+                "its bytes, so it can't be re-imported (element %r)." % (key, eid))
+            continue
+
+        if info.mode == "scalar":
+            if isinstance(new_value, dict) and "__bytes_len__" in new_value:
+                continue  # placeholder for a bytes value the dump can't round-trip
+            current = model.get_value(eid, aid)
+            if current == new_value:
+                continue
+            if aid == name_attr_id:
+                model.set_name(eid, new_value)
+            else:
+                try:
+                    model.set_value(eid, aid, new_value)
+                except (TypeError, ValueError) as ex:
+                    result.warnings.append(
+                        "Could not set %r on element %r: %s" % (key, eid, ex))
+                    continue
+            result.values_updated += 1
+            changed = True
+
+        elif info.mode == "struct":
+            if not isinstance(new_value, dict):
+                result.warnings.append(
+                    "Attribute %r expects an object, got %s (element %r); skipped."
+                    % (key, type(new_value).__name__, eid))
+                continue
+            current = model.get_value(eid, aid) or {}
+            patch = {}
+            for col, v in new_value.items():
+                if isinstance(v, dict) and "__bytes_len__" in v:
+                    continue  # bytes column placeholder, not round-trippable
+                cu = col.upper()
+                if current.get(cu) != v:
+                    patch[cu] = v
+            if not patch:
+                continue
+            try:
+                model.set_value(eid, aid, patch)
+            except (TypeError, ValueError) as ex:
+                result.warnings.append("Could not set %r on element %r: %s" % (key, eid, ex))
+                continue
+            result.values_updated += len(patch)
+            changed = True
+
+    # Element display name: dump_model() writes this separately from the
+    # "Name" attribute (elements.ELEMENT_NAME vs. the Core.Text value) --
+    # they're normally mirrored (see Model.set_name), so only apply this
+    # when the "Name" attribute wasn't already processed above.
+    new_name = e.get("name")
+    if isinstance(new_name, str) and "Name" not in attrs and "name" not in attrs:
+        if new_name != model.elements[eid].get("ELEMENT_NAME"):
+            if name_attr_id is not None:
+                model.set_name(eid, new_name)
+            else:
+                model.set_element_name(eid, new_name)
+            changed = True
+
+    return changed

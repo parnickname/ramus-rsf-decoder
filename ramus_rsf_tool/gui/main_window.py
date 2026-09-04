@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self.raw_panel = RawTablesPanel()
         self.raw_panel.modelStructureChanged.connect(self._on_structure_changed)
         self.json_panel = JsonDumpPanel()
+        self.json_panel.modelChanged.connect(self._on_structure_changed)
         self.tabs.addTab(self.attr_panel, "Attributes")
         self.tabs.addTab(self.raw_panel, "Raw Tables")
         self.tabs.addTab(self.json_panel, "JSON Dump")

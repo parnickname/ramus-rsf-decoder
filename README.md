@@ -20,10 +20,12 @@ directly; it does not require Ramus or a JVM to be installed.
   color pickers, font/bounds/status editors, file/HTML-text attachments),
   a generic raw-table spreadsheet editor for anything not specifically
   modeled (including IDEF0 arrow/sector tables), a live JSON dump viewer/
-  exporter, and dialogs for creating new elements, new IDEF0 function
-  boxes, and new diagrams cloned from an existing template qualifier.
+  exporter with a matching **redact-and-reimport** flow, and dialogs for
+  creating new elements, new IDEF0 function boxes, and new diagrams cloned
+  from an existing template qualifier.
 - **`ramus-rsf-cli`** — a scriptable command-line inspector (`dump`,
-  `qualifiers`, `elements`, `show`, `tables`, `table`, `rename`).
+  `qualifiers`, `elements`, `show`, `tables`, `table`, `rename`,
+  `import-json`).
 - **`ramus_rsf_tool`** — the underlying Python library
   (`rsf_core`/`rsf_model`/`template`), usable on its own for scripting;
   see the examples in `RAMUS_RSF_FORMAT.md` section 13.
@@ -48,6 +50,42 @@ directly; it does not require Ramus or a JVM to be installed.
   diagram as a top-level model root.
 - JSON export of the whole model (or just user-visible qualifiers) for
   scripting, review, or feeding to other tools.
+- **Export, redact, re-import**: export the JSON dump, edit/redact the
+  text (in the app or with any external editor), then re-import it and
+  save the resulting `.rsf`. Import is a *patch*: it matches qualifiers/
+  elements by id and only updates text/value fields that actually
+  changed — it never adds or removes anything, so redacting is safe even
+  if you delete a block by mistake (see "Redacting a file" below).
+
+## Redacting a file
+
+The JSON Dump tab supports the whole export → redact → re-import → save
+loop:
+
+1. **Attributes tab / JSON Dump tab → Export to file…** to get `dump.json`.
+2. Redact it — find/replace sensitive text in your own editor (or edit the
+   box directly in the app; it's a plain text field).
+3. **JSON Dump tab → Import from file…** (loads the edited JSON and applies
+   it immediately) — or, if you edited the box in place, **Apply edited
+   text below**. Either way you get a summary of what changed and any
+   entries that couldn't be applied.
+4. **File > Save** (or **Save As…**) to write the redacted `.rsf`.
+
+The same flow is scriptable without the GUI:
+
+```sh
+ramus-rsf-cli dump FILE.rsf --all --pretty > dump.json
+$EDITOR dump.json                       # or: sed -i 's/Alice/[REDACTED]/g' dump.json
+ramus-rsf-cli import-json FILE.rsf dump.json FILE.redacted.rsf
+```
+
+Import only ever **patches values already present** in the file — a
+qualifier/element id in the JSON that doesn't exist there is skipped and
+reported, never created, and a qualifier/element block you remove while
+redacting is simply left untouched rather than deleted. List-valued
+attributes and file/stream attributes (the dump only shows a byte count
+for those, not the actual bytes) aren't round-tripped through JSON either
+— edit those in the Raw Tables tab or the attribute editor directly.
 
 ## Installing on Arch Linux
 
@@ -98,7 +136,8 @@ python3 -m ramus_rsf_tool.rsf_cli qualifiers FILE.rsf   # CLI
 ramus_rsf_tool/
   rsf_core.py      container layer: ZIP + generic self-describing XML tables
   rsf_model.py      semantic EAV layer: qualifiers/elements/attributes,
-                     TYPE_MAP, IDEF0 function-box convenience helpers
+                     TYPE_MAP, IDEF0 function-box convenience helpers,
+                     dump_model()/apply_json_dump() (export-redact-reimport)
   rsf_cli.py        command-line inspector (also the `ramus-rsf-cli` entry point)
   template.py       builds a minimal valid archive from scratch (File > New)
   gui/
@@ -109,7 +148,7 @@ ramus_rsf_tool/
       attribute_editor.py  per-attribute editors (the "Attributes" tab)
       field_widgets.py     generic per-SQL-type widget builders
       raw_table_view.py    generic spreadsheet editor (the "Raw Tables" tab)
-      json_dump.py         JSON dump viewer/exporter tab
+      json_dump.py         JSON dump viewer/editor tab (export, redact, re-import)
       dialogs.py           New Element / New Function Box / Clone Qualifier / ...
       common.py            ColorButton and small shared helpers
 tests/                pytest suite (format round-trips, model edits, GUI smoke tests)

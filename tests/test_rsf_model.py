@@ -1,9 +1,10 @@
+import json
 import os
 import tempfile
 
 import pytest
 
-from ramus_rsf_tool.rsf_model import Model, argb, unpack_argb, dump_model
+from ramus_rsf_tool.rsf_model import Model, argb, unpack_argb, dump_model, apply_json_dump
 from ramus_rsf_tool.template import new_model
 
 
@@ -134,3 +135,95 @@ def test_list_mode_via_raw_table(model):
     t.rows.append({"ATTRIBUTE_ID": aid, "ELEMENT_ID": eid, "OTHER_ELEMENT": 777})
     rows = model.get_value(eid, aid)
     assert rows == [{"ATTRIBUTE_ID": aid, "ELEMENT_ID": eid, "OTHER_ELEMENT": 777}]
+
+
+# -- apply_json_dump: the export-redact-reimport workflow -------------------
+
+def test_apply_json_dump_redacts_text_values(model):
+    root = model.find_qualifier("Root Diagram")
+    eid = model.add_function_box(root, "Alice Johnson - SSN 123-45-6789", 0, 0, 10, 10)
+    other_name_aid = model.find_attribute(root, "F_STATUS")
+    model.set_value(eid, other_name_aid, {"OTHER_NAME": "contact: alice@example.com"})
+
+    data = dump_model(model, include_system_qualifiers=True)
+    text = json.dumps(data)
+    redacted_text = (text
+                      .replace("Alice Johnson - SSN 123-45-6789", "[REDACTED NAME]")
+                      .replace("contact: alice@example.com", "[REDACTED EMAIL]"))
+    redacted = json.loads(redacted_text)
+
+    result = apply_json_dump(model, redacted)
+    assert result.warnings == []
+    assert result.elements_updated == 1
+    assert result.values_updated == 2  # Name + F_STATUS.OTHER_NAME
+
+    assert model.elements[eid]["ELEMENT_NAME"] == "[REDACTED NAME]"
+    name_aid = model.find_attribute(root, "Name")
+    assert model.get_value(eid, name_aid) == "[REDACTED NAME]"
+    assert model.get_value(eid, other_name_aid)["OTHER_NAME"] == "[REDACTED EMAIL]"
+
+
+def test_apply_json_dump_is_a_noop_when_unchanged(model):
+    root = model.find_qualifier("Root Diagram")
+    model.add_function_box(root, "Unchanged box", 0, 0, 10, 10)
+    data = dump_model(model, include_system_qualifiers=True)
+
+    result = apply_json_dump(model, json.loads(json.dumps(data)))
+    assert result.elements_updated == 0
+    assert result.values_updated == 0
+    assert result.qualifiers_updated == 0
+    assert result.warnings == []
+
+
+def test_apply_json_dump_never_adds_or_removes(model):
+    root = model.find_qualifier("Root Diagram")
+    eid = model.add_function_box(root, "Real box", 0, 0, 10, 10)
+    data = dump_model(model, include_system_qualifiers=True)
+
+    # a ghost qualifier/element id that doesn't exist in the file
+    data["qualifiers"].append({"id": 999999, "name": "Ghost", "system": False,
+                                "elements": [{"id": 888888, "name": "Nope",
+                                              "attributes": {}}]})
+    before_qualifiers = set(model.qualifiers)
+    before_elements = set(model.elements)
+
+    result = apply_json_dump(model, data)
+    assert len(result.warnings) == 1
+    assert "999999" in result.warnings[0]
+    # nothing was added
+    assert set(model.qualifiers) == before_qualifiers
+    assert set(model.elements) == before_elements
+    # the real element is untouched (values matched, nothing changed)
+    assert model.elements[eid]["ELEMENT_NAME"] == "Real box"
+
+
+def test_apply_json_dump_skips_bytes_and_list_placeholders(model):
+    root = model.find_qualifier("Root Diagram")
+    eid = model.add_function_box(root, "Box", 0, 0, 10, 10)
+    desc_aid = model.find_attribute(root, "Description")
+    model.set_value(eid, desc_aid, "<p>secret</p>")
+
+    data = dump_model(model, include_system_qualifiers=True)
+    # dump_model() only ever emits a byte-length placeholder for streams --
+    # confirm it round-trips through apply_json_dump as a no-op, not a
+    # silent data-loss "clear the field" edit.
+    result = apply_json_dump(model, json.loads(json.dumps(data)))
+    assert result.values_updated == 0
+    assert model.get_value(eid, desc_aid) == b"<p>secret</p>"
+
+
+def test_apply_json_dump_save_reload_roundtrip(model):
+    root = model.find_qualifier("Root Diagram")
+    eid = model.add_function_box(root, "Original Name", 0, 0, 10, 10)
+    data = dump_model(model, include_system_qualifiers=True)
+    redacted = json.loads(json.dumps(data).replace("Original Name", "[REDACTED]"))
+    apply_json_dump(model, redacted)
+
+    fd, path = tempfile.mkstemp(suffix=".rsf")
+    os.close(fd)
+    try:
+        model.save(path)
+        m2 = Model.load(path)
+        assert m2.element_attributes(eid)["Name"] == "[REDACTED]"
+    finally:
+        os.unlink(path)
