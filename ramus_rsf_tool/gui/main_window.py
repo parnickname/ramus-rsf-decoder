@@ -6,6 +6,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QSplitter, QTabWidget, QVBoxLayout, QMessageBox,
     QFileDialog, QInputDialog, QLineEdit, QToolBar, QCheckBox, QLabel,
+    QApplication,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence, QCloseEvent
@@ -13,6 +14,7 @@ from PyQt6.QtGui import QAction, QKeySequence, QCloseEvent
 from ..rsf_model import Model
 from ..rsf_core import RsfArchive
 from .. import template
+from . import theme
 from .widgets.qualifier_tree import QualifierTree
 from .widgets.attribute_editor import AttributeEditorPanel
 from .widgets.raw_table_view import RawTablesPanel
@@ -124,6 +126,13 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(act_new_arrow)
         edit_menu.addAction(act_clone_qual)
         edit_menu.addAction(act_register_root)
+
+        view_menu = mb.addMenu("&Вид")
+        act_dark_theme = QAction("&Тёмная тема", self)
+        act_dark_theme.setCheckable(True)
+        act_dark_theme.setChecked(theme.is_dark_saved())
+        act_dark_theme.toggled.connect(self.action_toggle_dark_theme)
+        view_menu.addAction(act_dark_theme)
 
         help_menu = mb.addMenu("&Справка")
         act_about = QAction("&О программе", self)
@@ -428,6 +437,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Не удалось", str(ex))
                 return
             self._after_structural_edit(qid, None)
+
+    def action_toggle_dark_theme(self, checked: bool):
+        app = QApplication.instance()
+        theme.apply_theme(app, checked)
+        theme.set_dark_saved(checked)
 
     def action_about(self):
         AboutDialog(self).exec()

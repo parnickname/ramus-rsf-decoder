@@ -30,7 +30,7 @@ def app():
 def test_new_file_add_box_save_reload(app):
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     assert root is not None
 
     eid = win.model.add_function_box(root, "Box A", 10, 10, 100, 60)
@@ -50,7 +50,7 @@ def test_new_file_add_box_save_reload(app):
         win2 = MainWindow()
         win2.open_path(path)
         app.processEvents()
-        r2 = win2.model.find_qualifier("Root Diagram")
+        r2 = win2.model.find_qualifier("Корневая диаграмма")
         els = win2.model.elements_by_qualifier.get(r2, [])
         assert len(els) == 1
         assert win2.model.element_attributes(els[0])["Name"] == "Box A"
@@ -61,7 +61,7 @@ def test_new_file_add_box_save_reload(app):
 def test_name_edit_updates_tree_and_model(app):
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     eid = win.model.add_function_box(root, "Box A", 0, 0, 10, 10)
     win._after_structural_edit(root, eid)
     win.tree.select_element(root, eid)
@@ -101,7 +101,7 @@ def test_raw_table_add_and_delete_row(app):
 def test_json_dump_reflects_model(app):
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     win.model.add_function_box(root, "Dump Me", 0, 0, 10, 10)
     win.json_panel.set_model(win.model)
     win.json_panel.refresh()
@@ -111,7 +111,7 @@ def test_json_dump_reflects_model(app):
 def test_list_mode_attribute_row_builds_without_error(app):
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     eid = win.model.add_function_box(root, "Box A", 0, 0, 10, 10)
 
     aid = win.model.new_attribute_id()
@@ -141,7 +141,7 @@ def test_json_dump_export_redact_reimport_save_workflow(app):
     text in it, apply the redacted JSON, then save the .rsf."""
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     eid = win.model.add_function_box(root, "Alice Johnson - sensitive", 0, 0, 10, 10)
     win._after_structural_edit(root, eid)
 
@@ -195,7 +195,7 @@ def test_json_dump_invalid_json_shows_error_without_crashing(app):
 def test_new_arrow_dialog_box_to_box(app):
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     b1 = win.model.add_function_box(root, "Box A", 40, 40, 140, 80)
     b2 = win.model.add_function_box(root, "Box B", 300, 40, 140, 80)
     win._after_structural_edit(root, b2)
@@ -221,7 +221,7 @@ def test_new_arrow_dialog_box_to_box(app):
 def test_new_arrow_dialog_boundary_mode(app):
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     b1 = win.model.add_function_box(root, "Box A", 40, 40, 140, 80)
 
     dlg = NewArrowDialog(win.model, root, b1, None, win)
@@ -245,7 +245,7 @@ def test_new_arrow_dialog_boundary_mode(app):
 def test_new_arrow_dialog_rejects_boundary_to_boundary(app):
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     win.model.add_function_box(root, "Box A", 40, 40, 140, 80)
 
     dlg = NewArrowDialog(win.model, root, None, None, win)
@@ -261,7 +261,7 @@ def test_action_new_arrow_end_to_end(app):
     with QDialog.exec patched to simulate the user accepting it."""
     win = MainWindow()
     win.new_file()
-    root = win.model.find_qualifier("Root Diagram")
+    root = win.model.find_qualifier("Корневая диаграмма")
     b1 = win.model.add_function_box(root, "Box A", 40, 40, 140, 80)
     b2 = win.model.add_function_box(root, "Box B", 300, 40, 140, 80)
     win._after_structural_edit(root, b1)

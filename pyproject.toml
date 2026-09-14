@@ -40,4 +40,4 @@ Homepage = "https://github.com/parnickname/ramus-rsf-decoder"
 include = ["ramus_rsf_tool*"]
 
 [tool.setuptools.package-data]
-ramus_rsf_tool = ["gui/resources/*"]
+ramus_rsf_tool = ["gui/resources/*", "gui/resources/icons/*"]

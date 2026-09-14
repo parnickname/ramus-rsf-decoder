@@ -1,17 +1,39 @@
 # Ramus RSF Editor
 
-Нативное настольное приложение для Linux (PyQt6) для чтения и редактирования
-файлов моделей IDEF0/DFD [Ramus](https://github.com/Vitaliy-Yakovchuk/ramus)
-(`.rsf`) — построено на «чистой» (clean-room), реализованной с нуля
-реконструкции формата файла. Полное описание процесса реверс-инжиниринга
-(что подтверждено на реальных примерах файлов, а что выведено из исходного
-кода, и известные ограничения) — в [`RAMUS_RSF_FORMAT.md`](RAMUS_RSF_FORMAT.md).
+Нативное настольное приложение (PyQt6) для **Windows, macOS и Linux** для
+чтения и редактирования файлов моделей IDEF0/DFD
+[Ramus](https://github.com/Vitaliy-Yakovchuk/ramus) (`.rsf`) — построено на
+«чистой» (clean-room), реализованной с нуля реконструкции формата файла.
+Полное описание процесса реверс-инжиниринга (что подтверждено на реальных
+примерах файлов, а что выведено из исходного кода, и известные
+ограничения) — в [`RAMUS_RSF_FORMAT.md`](RAMUS_RSF_FORMAT.md).
 
 ![Скриншот](docs/screenshot.png)
 
 Не связано с проектом Ramus. `.rsf` — это ZIP-архив из самоописывающихся
 XML-таблиц (см. документ о формате) — этот инструмент читает и пишет такой
 контейнер напрямую; для его работы не требуется ни сам Ramus, ни JVM.
+
+## Установка в один клик
+
+Готовые установщики для всех трёх платформ публикуются на странице
+**[Releases](https://github.com/parnickname/ramus-rsf-decoder/releases/latest)**
+при каждом выпуске версии — Python и PyQt6 отдельно ставить не нужно, всё
+уже внутри:
+
+| Платформа | Файл | Что делать |
+|---|---|---|
+| 🪟 Windows | `RamusRSFEditor-Setup-X.Y.Z.exe` | Скачать и запустить — мастер установки на русском, без прав администратора, ярлык в меню «Пуск» и ассоциация файлов `.rsf` ставятся автоматически. |
+| 🍎 macOS | `RamusRSFEditor-X.Y.Z.dmg` | Скачать, открыть образ, перетащить значок в **Applications** — готово. |
+| 🐧 Linux | `RamusRSFEditor-X.Y.Z-x86_64.AppImage` | Скачать, дать файлу право на исполнение (`chmod +x`) и запустить — установка не требуется, работает на любом дистрибутиве. |
+
+Пользователи Arch Linux могут вместо этого поставить пакет через
+`makepkg` — см. [«Установка на Arch Linux»](#установка-на-arch-linux) ниже.
+
+Как эти установщики собираются — в
+[`.github/workflows/release.yml`](.github/workflows/release.yml) и
+[`packaging/`](packaging/) (PyInstaller-спека + Inno Setup для Windows,
+`create-dmg` для macOS, `appimagetool` для Linux).
 
 ## Что внутри
 
@@ -35,6 +57,10 @@ XML-таблиц (см. документ о формате) — этот инс�
 
 ## Возможности
 
+- **Windows, macOS и Linux** из одной кодовой базы (PyQt6), с готовыми
+  установщиками в один клик для всех трёх — см. выше.
+- **Светлая и тёмная тема** (`Вид > Тёмная тема`), выбор запоминается между
+  запусками.
 - Открытие, редактирование и сохранение файлов `.rsf` без потерь
   (побайтово идентичный цикл для всего нетронутого — состояние GUI-сессии,
   вложения, настройки печати).
@@ -102,7 +128,10 @@ ramus-rsf-cli import-json FILE.rsf dump.json FILE.redacted.rsf
 редактировать во вкладке «Сырые таблицы» или напрямую в редакторе
 атрибутов.
 
-## Установка в Arch Linux
+## Установка на Arch Linux
+
+Альтернатива установщику в один клик из раздела выше — системный пакет
+через `makepkg`.
 
 ### Вариант A: makepkg (рекомендуется)
 
@@ -121,11 +150,14 @@ ramus-rsf-gui [FILE.rsf]
 ramus-rsf-cli --help
 ```
 
-### Вариант B: pip (любой Linux, включая Arch без makepkg)
+### Вариант B: pip (любая платформа, включая Arch без makepkg)
+
+Работает одинаково на Linux, Windows и macOS — например, для разработки
+или если по какой-то причине не подходит готовый установщик из раздела
+выше:
 
 ```sh
-sudo pacman -S python-pyqt6   # или: pip install --user PyQt6
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install .
 ramus-rsf-gui
 ```
@@ -140,7 +172,7 @@ pytest
 ## Запуск без установки
 
 ```sh
-pip install --user PyQt6
+pip install .
 python3 -m ramus_rsf_tool.gui.app [FILE.rsf]      # GUI
 python3 -m ramus_rsf_tool.rsf_cli qualifiers FILE.rsf   # CLI
 ```
@@ -157,6 +189,7 @@ ramus_rsf_tool/
   template.py       строит минимальный валидный архив с нуля (Файл > Создать)
   gui/
     app.py            точка входа GUI (`ramus-rsf-gui`)
+    theme.py          переключатель светлой/тёмной темы (QPalette + QSettings)
     main_window.py     меню, панель инструментов, связка панелей, ввод-вывод файлов, отслеживание изменений
     widgets/
       qualifier_tree.py    левый навигатор по квалификаторам/элементам
@@ -167,7 +200,16 @@ ramus_rsf_tool/
       dialogs.py           Новый элемент / Новый функциональный блок / Новая стрелка / Клонировать квалификатор / ...
       common.py            ColorButton и другие небольшие общие вспомогательные функции
 tests/                набор тестов pytest (циклы формата, правки модели, дымовые тесты GUI)
-packaging/            PKGBUILD, ярлык .desktop, MIME-тип, ссылка на значок
+packaging/
+  PKGBUILD, ramus-rsf-tool.desktop, ramus-rsf-tool-mime.xml  -- пакет для Arch Linux
+  icons/               генератор .ico/.icns/.png из общего SVG-значка (generate_icons.py)
+  pyinstaller/         общая .spec-сборка для Windows/macOS/Linux
+  windows/             скрипт Inno Setup -> Setup.exe
+  macos/                скрипт сборки .dmg (create-dmg)
+  linux/                скрипт сборки .AppImage (appimagetool)
+.github/workflows/
+  release.yml          сборка всех трёх установщиков и публикация в GitHub Releases по тегу vX.Y.Z
+  tests.yml             pytest на каждый push/PR
 RAMUS_RSF_FORMAT.md   описание реверс-инжиниринга формата файла
 ```
 
@@ -182,6 +224,36 @@ QT_QPA_PLATFORM=offscreen pytest tests/ -v
 набор тестов (циклы формата, редактирование модели и взаимодействие с GUI)
 выполняется без графического окружения в CI или по SSH — X-сервер не
 требуется. `QT_QPA_PLATFORM` не нужен, если доступен настоящий дисплей.
+
+## Сборка установщиков локально
+
+Установщики из раздела «Установка в один клик» собираются автоматически в
+GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml))
+при каждом теге `vX.Y.Z`, но те же шаги можно выполнить и локально на
+соответствующей ОС:
+
+```sh
+pip install . pyinstaller
+pyinstaller packaging/pyinstaller/ramus-rsf-gui.spec --noconfirm
+```
+
+Дальше, в зависимости от платформы:
+
+```sh
+# Windows (нужен установленный Inno Setup 6): результат -- dist/installer/*.exe
+iscc packaging\windows\ramus-rsf-tool.iss
+
+# macOS (нужен create-dmg: brew install create-dmg): результат -- dist/installer/*.dmg
+packaging/macos/build_dmg.sh 1.1.0
+
+# Linux (appimagetool скачается автоматически): результат -- dist/installer/*.AppImage
+packaging/linux/build_appimage.sh 1.1.0
+```
+
+Значки во всех трёх установщиках генерируются из одного SVG
+(`ramus_rsf_tool/gui/resources/ramus-rsf-tool.svg`) скриптом
+`packaging/icons/generate_icons.py` — перезапускать его нужно только если
+менялся сам SVG, готовые `.ico`/`.icns`/`.png` уже лежат в репозитории.
 
 ## Известные ограничения
 

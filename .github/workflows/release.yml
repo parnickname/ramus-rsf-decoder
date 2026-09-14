@@ -1,0 +1,125 @@
+name: Release
+
+# Собирает установщики в один клик для Windows (.exe), macOS (.dmg) и
+# Linux (.AppImage) и публикует их на странице GitHub Releases.
+#
+# Запуск:
+#   - автоматически при пуше тега вида v1.2.3 -- публикует релиз;
+#   - вручную (workflow_dispatch) -- только собирает артефакты, без
+#     публикации релиза, удобно для проверки сборки перед тегом.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      is_release: ${{ steps.v.outputs.is_release }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Установить зависимости
+        run: |
+          pip install .
+          pip install pyinstaller
+      - name: Собрать через PyInstaller
+        run: pyinstaller packaging/pyinstaller/ramus-rsf-gui.spec --noconfirm
+      - name: Установить Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Собрать setup.exe
+        shell: bash
+        run: |
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
+            packaging/windows/ramus-rsf-tool.iss \
+            "/DAppVersion=${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/installer/*.exe
+          if-no-files-found: error
+
+  build-macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Установить зависимости
+        run: |
+          pip install .
+          pip install pyinstaller
+          brew install create-dmg
+      - name: Собрать через PyInstaller
+        run: pyinstaller packaging/pyinstaller/ramus-rsf-gui.spec --noconfirm
+      - name: Собрать .dmg
+        run: packaging/macos/build_dmg.sh "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: dist/installer/*.dmg
+          if-no-files-found: error
+
+  build-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Установить зависимости
+        run: |
+          pip install .
+          pip install pyinstaller
+      - name: Собрать через PyInstaller
+        run: pyinstaller packaging/pyinstaller/ramus-rsf-gui.spec --noconfirm
+      - name: Собрать .AppImage
+        run: packaging/linux/build_appimage.sh "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer
+          path: dist/installer/*.AppImage
+          if-no-files-found: error
+
+  release:
+    if: needs.version.outputs.is_release == 'true'
+    needs: [version, build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Опубликовать релиз
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Редактор Ramus RSF ${{ needs.version.outputs.version }}"
+          generate_release_notes: true
+          files: installers/*

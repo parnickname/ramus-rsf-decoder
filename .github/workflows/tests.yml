@@ -1,0 +1,25 @@
+name: Тесты
+
+on:
+  push:
+    branches: [main, english]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Системные библиотеки для офскрин-Qt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0
+      - name: Установить зависимости
+        run: pip install -e ".[dev]"
+      - name: pytest
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest tests/ -v
