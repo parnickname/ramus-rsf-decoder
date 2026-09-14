@@ -1,15 +1,16 @@
 """
-The "JSON Dump" tab: dump_model() rendered as editable text, with export
-and a matching re-import. The intended workflow this exists for is:
+Вкладка "JSON-дамп": dump_model(), отрисованный как редактируемый текст,
+с экспортом и соответствующим повторным импортом. Предполагаемый рабочий
+процесс, для которого это существует:
 
-    Export to file... -> redact/edit the text elsewhere -> Import from
-    file... (or paste the edited JSON directly into the box and hit
-    Apply edited text) -> File > Save.
+    Экспорт в файл... -> отредактировать/отцензурировать текст где-то ещё
+    -> Импорт из файла... (либо вставить отредактированный JSON прямо в
+    поле и нажать «Применить отредактированный текст») -> Файл > Сохранить.
 
-Import is a *patch*, not a replace -- see rsf_model.apply_json_dump()'s
-docstring for exactly what it will and won't touch (in short: only values
-of qualifiers/elements that already exist, matched by id; nothing is ever
-added or removed by this).
+Импорт -- это *патч*, а не замена -- точное описание того, что он тронет,
+а что нет, см. в docstring rsf_model.apply_json_dump() (коротко: только
+значения квалификаторов/элементов, которые уже существуют, сопоставленные
+по id; этим ничего никогда не добавляется и не удаляется).
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ from ...rsf_model import Model, dump_model, apply_json_dump
 
 
 class JsonDumpPanel(QWidget):
-    modelChanged = pyqtSignal()  # emitted after a successful import/apply
+    modelChanged = pyqtSignal()  # выдаётся после успешного импорта/применения
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -36,11 +37,11 @@ class JsonDumpPanel(QWidget):
         outer = QVBoxLayout(self)
 
         top = QHBoxLayout()
-        self.include_system = QCheckBox("Include system qualifiers/attributes")
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.setToolTip("Regenerate this box from the current model "
-                                     "(discards any unapplied edits below).")
-        self.export_btn = QPushButton("Export to file…")
+        self.include_system = QCheckBox("Включать системные квалификаторы/атрибуты")
+        self.refresh_btn = QPushButton("Обновить")
+        self.refresh_btn.setToolTip("Перестроить это поле по текущей модели "
+                                     "(отменяет все ещё не применённые правки ниже).")
+        self.export_btn = QPushButton("Экспорт в файл…")
         self.refresh_btn.clicked.connect(self.refresh)
         self.export_btn.clicked.connect(self._export)
         top.addWidget(self.include_system)
@@ -50,12 +51,12 @@ class JsonDumpPanel(QWidget):
         outer.addLayout(top)
 
         import_row = QHBoxLayout()
-        import_row.addWidget(QLabel("Redact/edit the exported JSON, then:"))
-        self.import_btn = QPushButton("Import from file…")
-        self.import_btn.setToolTip("Load a JSON file and apply it to the model.")
-        self.apply_btn = QPushButton("Apply edited text below")
-        self.apply_btn.setToolTip("Apply whatever JSON is currently in the box "
-                                   "below to the model (for edits made directly here).")
+        import_row.addWidget(QLabel("Отцензурируйте/отредактируйте экспортированный JSON, затем:"))
+        self.import_btn = QPushButton("Импорт из файла…")
+        self.import_btn.setToolTip("Загрузить JSON-файл и применить его к модели.")
+        self.apply_btn = QPushButton("Применить отредактированный текст ниже")
+        self.apply_btn.setToolTip("Применить к модели тот JSON, что сейчас "
+                                   "находится в поле ниже (для правок, сделанных прямо здесь).")
         self.import_btn.clicked.connect(self._import_from_file)
         self.apply_btn.clicked.connect(self._apply_text)
         import_row.addWidget(self.import_btn)
@@ -65,11 +66,12 @@ class JsonDumpPanel(QWidget):
 
         self.text = QPlainTextEdit()
         self.text.setFont(QFont("Monospace"))
-        self.text.setToolTip("Editable -- paste or edit redacted JSON here, then "
-                              "'Apply edited text below'.")
+        self.text.setToolTip("Редактируемо -- вставьте или отредактируйте "
+                              "отцензурированный JSON здесь, затем нажмите "
+                              "«Применить отредактированный текст ниже».")
         outer.addWidget(self.text, 1)
 
-    # -- wiring --------------------------------------------------------
+    # -- связывание --------------------------------------------------------
     def set_model(self, model: Optional[Model]):
         self.model = model
         self.refresh()
@@ -84,47 +86,47 @@ class JsonDumpPanel(QWidget):
     def _export(self):
         if self.model is None:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export JSON dump", "dump.json",
-                                               "JSON files (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Экспорт JSON-дампа", "dump.json",
+                                               "Файлы JSON (*.json)")
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.text.toPlainText())
         except OSError as ex:
-            QMessageBox.critical(self, "Export failed", str(ex))
+            QMessageBox.critical(self, "Экспорт не удался", str(ex))
 
-    # -- import ------------------------------------------------------------
+    # -- импорт ------------------------------------------------------------
     def _import_from_file(self):
         if self.model is None:
-            QMessageBox.information(self, "No file", "Open or create a file first.")
+            QMessageBox.information(self, "Нет файла", "Сначала откройте или создайте файл.")
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Import JSON dump", "",
-                                               "JSON files (*.json);;All files (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Импорт JSON-дампа", "",
+                                               "Файлы JSON (*.json);;Все файлы (*)")
         if not path:
             return
         try:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
         except OSError as ex:
-            QMessageBox.critical(self, "Import failed", str(ex))
+            QMessageBox.critical(self, "Импорт не удался", str(ex))
             return
         self.text.setPlainText(text)
         self._apply_text()
 
     def _apply_text(self):
         if self.model is None:
-            QMessageBox.information(self, "No file", "Open or create a file first.")
+            QMessageBox.information(self, "Нет файла", "Сначала откройте или создайте файл.")
             return
         try:
             data = json.loads(self.text.toPlainText())
         except json.JSONDecodeError as ex:
-            QMessageBox.critical(self, "Invalid JSON", "Could not parse the JSON:\n%s" % ex)
+            QMessageBox.critical(self, "Некорректный JSON", "Не удалось разобрать JSON:\n%s" % ex)
             return
         if not isinstance(data, dict) or "qualifiers" not in data:
-            QMessageBox.critical(self, "Invalid JSON",
-                                  "This doesn't look like a JSON dump from this app "
-                                  "(expected a top-level {\"qualifiers\": [...]} object).")
+            QMessageBox.critical(self, "Некорректный JSON",
+                                  "Это не похоже на JSON-дамп из этого приложения "
+                                  "(ожидался верхнеуровневый объект {\"qualifiers\": [...]}).")
             return
 
         result = apply_json_dump(self.model, data)
@@ -134,10 +136,10 @@ class JsonDumpPanel(QWidget):
             shown = result.warnings[:25]
             detail = "\n".join(shown)
             if len(result.warnings) > len(shown):
-                detail += "\n... and %d more" % (len(result.warnings) - len(shown))
+                detail += "\n... и ещё %d" % (len(result.warnings) - len(shown))
 
         box = QMessageBox(self)
-        box.setWindowTitle("Import applied")
+        box.setWindowTitle("Импорт применён")
         box.setText(result.summary())
         if detail:
             box.setDetailedText(detail)

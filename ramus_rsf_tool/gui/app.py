@@ -19,7 +19,7 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
 
     app = QApplication(sys.argv[:1] + argv)
-    app.setApplicationName("Ramus RSF Editor")
+    app.setApplicationName("Редактор Ramus RSF")
     app.setOrganizationName("ramus-rsf-tool")
 
     win = MainWindow()

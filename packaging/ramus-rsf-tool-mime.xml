@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-ramus-rsf">
-    <comment>Ramus IDEF0/DFD model</comment>
+    <comment>Модель Ramus IDEF0/DFD</comment>
+    <comment xml:lang="en">Ramus IDEF0/DFD model</comment>
     <glob pattern="*.rsf"/>
     <icon name="ramus-rsf-tool"/>
   </mime-type>

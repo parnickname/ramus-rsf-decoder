@@ -1,8 +1,9 @@
 """
-The "Raw Tables" tab: a generic spreadsheet view over *any* table in the
-archive (data/**/*.xml), including ones with no semantic mapping in
-TYPE_MAP -- this is the escape hatch RAMUS_RSF_FORMAT.md points to for
-arrow/sector editing and anything else not covered by the Attributes tab.
+Вкладка "Сырые таблицы": обобщённое табличное представление *любой*
+таблицы в архиве (data/**/*.xml), включая те, у которых нет семантического
+отображения в TYPE_MAP -- это аварийный люк, на который указывает
+RAMUS_RSF_FORMAT.md для редактирования стрелок/секторов и всего прочего,
+что не покрыто вкладкой "Атрибуты".
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from .common import coerce_for_field, display_value
 
 
 class RawTablesPanel(QWidget):
-    modelStructureChanged = pyqtSignal()  # user hit "Reindex" -- tree etc should refresh
+    modelStructureChanged = pyqtSignal()  # пользователь нажал "Переиндексировать" -- дерево и т.д. должны обновиться
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -30,18 +31,18 @@ class RawTablesPanel(QWidget):
 
         outer = QVBoxLayout(self)
         top = QHBoxLayout()
-        top.addWidget(QLabel("Table:"))
+        top.addWidget(QLabel("Таблица:"))
         self.combo = QComboBox()
         self.combo.setMinimumWidth(360)
         self.combo.currentIndexChanged.connect(self._on_combo_changed)
         top.addWidget(self.combo, 1)
-        self.add_row_btn = QPushButton("Add row")
-        self.del_row_btn = QPushButton("Delete row(s)")
-        self.reindex_btn = QPushButton("Reindex model")
+        self.add_row_btn = QPushButton("Добавить строку")
+        self.del_row_btn = QPushButton("Удалить строк(и)")
+        self.reindex_btn = QPushButton("Переиндексировать модель")
         self.reindex_btn.setToolTip(
-            "Re-derive qualifier/element/attribute indexes from the raw "
-            "tables (call after editing IDs here so the rest of the GUI "
-            "sees the change).")
+            "Заново вывести индексы квалификаторов/элементов/атрибутов из "
+            "сырых таблиц (вызывайте после правки ID здесь, чтобы остальной "
+            "GUI увидел изменение).")
         self.add_row_btn.clicked.connect(self._add_row)
         self.del_row_btn.clicked.connect(self._delete_selected_rows)
         self.reindex_btn.clicked.connect(self._reindex)
@@ -59,7 +60,7 @@ class RawTablesPanel(QWidget):
         self.info.setStyleSheet("color: #888;")
         outer.addWidget(self.info)
 
-    # -- wiring --------------------------------------------------------
+    # -- связывание --------------------------------------------------------
     def set_model(self, model: Optional[Model]):
         self.model = model
         self._refresh_combo()
@@ -75,7 +76,7 @@ class RawTablesPanel(QWidget):
         if self.model is not None:
             for path in self.model.table_paths():
                 n = len(self.model.table(path).rows)
-                self.combo.addItem("%s  (%d rows)" % (path, n), path)
+                self.combo.addItem("%s  (%d строк)" % (path, n), path)
         self._loading = False
         if self.combo.count():
             self.combo.setCurrentIndex(0)
@@ -118,11 +119,11 @@ class RawTablesPanel(QWidget):
                 self.table.setItem(r, c, item)
         self.table.resizeColumnsToContents()
         self._loading = False
-        self.info.setText("%s -- %d rows, %d columns. Blank NULL vs empty string is not "
-                           "distinguished here; leave a cell blank to write an empty "
-                           "string." % (path, len(t.rows), len(cols)))
+        self.info.setText("%s -- %d строк, %d столбцов. Пустое NULL и пустая строка "
+                           "здесь не различаются: оставьте ячейку пустой, чтобы "
+                           "записать пустую строку." % (path, len(t.rows), len(cols)))
 
-    # -- editing ---------------------------------------------------------
+    # -- редактирование ---------------------------------------------------------
     def _on_item_changed(self, item: QTableWidgetItem):
         if self._loading:
             return
@@ -137,7 +138,7 @@ class RawTablesPanel(QWidget):
         try:
             value = coerce_for_field(item.text(), fld.type)
         except ValueError as ex:
-            QMessageBox.warning(self, "Invalid value", str(ex))
+            QMessageBox.warning(self, "Некорректное значение", str(ex))
             self._loading = True
             item.setText(display_value(t.rows[r].get(col.upper(), NULL)))
             self._loading = False
@@ -174,7 +175,7 @@ class RawTablesPanel(QWidget):
         self.modelStructureChanged.emit()
 
     def _notify_dirty(self):
-        # bubble up through the same channel the attribute editor uses
+        # передаём наверх по тому же каналу, что использует редактор атрибутов
         w = self.window()
         if hasattr(w, "mark_dirty"):
             w.mark_dirty()

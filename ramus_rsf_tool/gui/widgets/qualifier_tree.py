@@ -1,4 +1,4 @@
-"""The left-hand navigator: qualifiers (classes) -> elements (instances)."""
+"""Левый навигатор: квалификаторы (классы) -> элементы (экземпляры)."""
 from __future__ import annotations
 
 from typing import Optional
@@ -13,16 +13,17 @@ ELEMENT_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class QualifierTree(QTreeWidget):
-    """QTreeWidget with one top-level item per qualifier and one child
-    item per element. elementSelected(qualifier_id, element_id) fires
-    when the user picks an element; qualifierSelected(qualifier_id) when
-    they pick a qualifier itself (element_id is None in that case)."""
+    """QTreeWidget с одним элементом верхнего уровня на каждый
+    квалификатор и одним дочерним элементом на каждый элемент модели.
+    elementSelected(qualifier_id, element_id) срабатывает, когда
+    пользователь выбирает элемент; qualifierSelected(qualifier_id) --
+    когда выбирает сам квалификатор (element_id в этом случае None)."""
 
-    elementSelected = pyqtSignal(int, object)   # (qualifier_id, element_id or None)
+    elementSelected = pyqtSignal(int, object)   # (qualifier_id, element_id или None)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setHeaderLabels(["Name", "ID"])
+        self.setHeaderLabels(["Имя", "ID"])
         self.setColumnWidth(0, 260)
         self.model: Optional[Model] = None
         self.show_system = False
@@ -46,8 +47,8 @@ class QualifierTree(QTreeWidget):
             is_system = bool(q.get("QUALIFIER_SYSTEM"))
             if is_system and not self.show_system:
                 continue
-            qname = q.get("QUALIFIER_NAME") or "(unnamed)"
-            label = qname + ("  [system]" if is_system else "")
+            qname = q.get("QUALIFIER_NAME") or "(без имени)"
+            label = qname + ("  [система]" if is_system else "")
             qitem = QTreeWidgetItem([label, str(qid)])
             qitem.setData(0, QUALIFIER_ROLE, qid)
             qitem.setData(0, ELEMENT_ROLE, None)
@@ -56,7 +57,7 @@ class QualifierTree(QTreeWidget):
             self.addTopLevelItem(qitem)
             for eid in self.model.elements_by_qualifier.get(qid, []):
                 e = self.model.elements[eid]
-                ename = e.get("ELEMENT_NAME") or "(unnamed)"
+                ename = e.get("ELEMENT_NAME") or "(без имени)"
                 eitem = QTreeWidgetItem([ename, str(eid)])
                 eitem.setData(0, QUALIFIER_ROLE, qid)
                 eitem.setData(0, ELEMENT_ROLE, eid)

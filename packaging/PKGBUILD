@@ -1,8 +1,8 @@
-# Maintainer: (unset -- fill in before submitting to the AUR)
+# Maintainer: (не указан -- заполните перед отправкой в AUR)
 pkgname=ramus-rsf-tool-git
 pkgver=r1.0000000
 pkgrel=1
-pkgdesc="GUI editor and CLI for Ramus (.rsf) IDEF0/DFD model files"
+pkgdesc="Графический редактор и CLI для файлов моделей IDEF0/DFD Ramus (.rsf)"
 arch=('any')
 url="https://github.com/parnickname/ramus-rsf-decoder"
 license=('MIT')

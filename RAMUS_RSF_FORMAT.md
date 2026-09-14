@@ -1,82 +1,87 @@
-# The Ramus `.rsf` file format — reverse-engineering notes and toolkit
+# Формат файла Ramus `.rsf` — заметки реверс-инжиниринга и набор инструментов
 
-**Source studied:** [`Vitaliy-Yakovchuk/ramus`](https://github.com/Vitaliy-Yakovchuk/ramus)
-(GPL-3.0), a Java IDEF0/DFD business-process modeler. `.rsf` is its native
-save format.
+**Изученный исходный код:** [`Vitaliy-Yakovchuk/ramus`](https://github.com/Vitaliy-Yakovchuk/ramus)
+(GPL-3.0), Java-моделировщик бизнес-процессов IDEF0/DFD. `.rsf` — его
+родной формат сохранения.
 
-**Method:** the full repository was cloned and read (not guessed from
-binaries) — in particular `core/.../FileIEngineImpl.java`,
-`core/.../TableToXML.java` / `XMLToTable.java` (the exact export/import
-code), `common/.../persistent/*` (the annotation-driven mini-ORM), the SQL
-schema files under `database-storage/.../*.sql`, and `idef0-core/idef0-common`
-(the IDEF0-specific attribute types). Every claim below was then
-**cross-checked against three real `.rsf` files bundled in the repo itself**
+**Метод:** весь репозиторий был склонирован и прочитан (а не угадан по
+бинарникам) — в частности, `core/.../FileIEngineImpl.java`,
+`core/.../TableToXML.java` / `XMLToTable.java` (точный код
+экспорта/импорта), `common/.../persistent/*` (мини-ORM на аннотациях),
+файлы SQL-схемы в `database-storage/.../*.sql`, и
+`idef0-core/idef0-common` (специфичные для IDEF0 типы атрибутов). Каждое
+утверждение ниже затем было **перепроверено на трёх реальных файлах
+`.rsf`, входящих в сам репозиторий**
 (`dest/doc/en/Enterprise activity.rsf`, `dest/doc/ru/Model example.rsf`,
-`dest/doc/ru/Пример модели.rsf`) by unzipping them and inspecting the actual
-XML. Where something is inferred from source but *not* confirmed against a
-real file or a running Ramus, it's flagged explicitly.
+`dest/doc/ru/Пример модели.rsf`) путём их распаковки и изучения реального
+XML. Там, где что-то выведено из исходного кода, но *не* подтверждено на
+реальном файле или запущенном Ramus, это явно помечено.
 
-A companion Python toolkit (`rsf_core.py`, `rsf_model.py`, `rsf_cli.py`) is
-provided as separate files and implements everything described here. It has
-been tested by round-tripping and editing the real sample files (details in
-[Verification](#verification)).
-
----
-
-## Table of contents
-
-1. [The big picture](#1-the-big-picture)
-2. [Container format: it's a ZIP](#2-container-format-its-a-zip)
-3. [The generic table XML format](#3-the-generic-table-xml-format)
-4. [Value encoding rules, per SQL type](#4-value-encoding-rules-per-sql-type)
-5. [The data model: a self-describing EAV database](#5-the-data-model-a-self-describing-eav-database)
-6. [Full table reference](#6-full-table-reference)
-7. [ID allocation and why external edits are safe](#7-id-allocation-and-why-external-edits-are-safe)
-8. [The IDEF0 "function box" attribute set](#8-the-idef0-function-box-attribute-set)
-9. [Decomposition hierarchy (partially understood)](#9-decomposition-hierarchy-partially-understood)
-10. [Drawing new arrows (sectors / streams / crosspoints)](#10-drawing-new-arrows-sectors--streams--crosspoints)
-11. [File-attribute / HTML-text streams](#11-file-attribute--html-text-streams)
-12. [Old-format compatibility (branches/versioning)](#12-old-format-compatibility-branchesversioning)
-13. [The toolkit](#13-the-toolkit)
-14. [Verification](#14-verification)
-15. [Source-file cross-reference](#15-source-file-cross-reference)
+Сопутствующий набор инструментов на Python (`rsf_core.py`, `rsf_model.py`,
+`rsf_cli.py`) поставляется в виде отдельных файлов и реализует всё
+описанное здесь. Он был протестирован циклическим сохранением/загрузкой и
+редактированием реальных образцов файлов (подробности в
+[разделе «Проверка»](#14-проверка)).
 
 ---
 
-## 1. The big picture
+## Оглавление
 
-Ramus's persistence layer (`core`, `database-storage`, `common/persistent`)
-is a tiny embedded relational database framework of its own. At runtime it
-keeps everything in a real SQL database (originally HSQLDB-style); a
-`.rsf` file is simply **a dump of every table in that database, as XML,
-zipped up**, plus a handful of raw binary "streams" (attachments, GUI
-state, print settings) stored at their own paths inside the same zip.
+1. [Общая картина](#1-общая-картина)
+2. [Формат контейнера: это ZIP](#2-формат-контейнера-это-zip)
+3. [Обобщённый XML-формат таблицы](#3-обобщённый-xml-формат-таблицы)
+4. [Правила кодирования значений по SQL-типам](#4-правила-кодирования-значений-по-sql-типам)
+5. [Модель данных: самоописывающаяся EAV-база данных](#5-модель-данных-самоописывающаяся-eav-база-данных)
+6. [Полный справочник таблиц](#6-полный-справочник-таблиц)
+7. [Выделение ID и почему внешние правки безопасны](#7-выделение-id-и-почему-внешние-правки-безопасны)
+8. [Набор атрибутов «функционального блока» IDEF0](#8-набор-атрибутов-функционального-блока-idef0)
+9. [Иерархия декомпозиции (изучена частично)](#9-иерархия-декомпозиции-изучена-частично)
+10. [Отрисовка новых стрелок (секторы / потоки / точки пересечения)](#10-отрисовка-новых-стрелок-секторы--потоки--точки-пересечения)
+11. [Потоки файловых атрибутов / HTML-текста](#11-потоки-файловых-атрибутов--html-текста)
+12. [Совместимость со старым форматом (ветки/версионирование)](#12-совместимость-со-старым-форматом-веткиверсионирование)
+13. [Набор инструментов](#13-набор-инструментов)
+14. [Проверка](#14-проверка)
+15. [Перекрёстные ссылки на исходные файлы](#15-перекрёстные-ссылки-на-исходные-файлы)
 
-Crucially, the dump format is **self-describing**: every table's XML
-carries its own column names and SQL types inline, and the *set of tables
-that exist* is itself listed in one of the tables (`persistents`). This is
-what makes the format tractable to read and write externally — you don't
-need a schema file, you can discover the schema from the file itself.
+---
 
-The actual application data (IDEF0 function boxes, DFD elements, arrows,
-positions, colors, fonts, notes, everything) is stored as a generic
-**Entity–Attribute–Value (EAV)** model: `qualifiers` are roughly "classes",
-`elements` are "instances" of a qualifier, `attributes` are "fields", and
-each attribute *type* (Text, Long, Rectangle, Color, Font, ...) has its own
-physical value table keyed by `(attribute_id, element_id)`.
+## 1. Общая картина
 
-## 2. Container format: it's a ZIP
+Слой хранения Ramus (`core`, `database-storage`, `common/persistent`) —
+это собственный маленький встроенный фреймворк реляционной базы данных.
+Во время работы он хранит всё в настоящей SQL-базе данных (изначально в
+стиле HSQLDB); файл `.rsf` — это просто **дамп каждой таблицы этой базы
+данных в виде XML, упакованный в ZIP**, плюс горстка «сырых» бинарных
+«потоков» (вложения, состояние GUI, настройки печати), хранящихся по
+собственным путям внутри того же архива.
 
-Open any `.rsf` with a normal zip tool (`unzip`, `zipfile.ZipFile`, 7-Zip,
-etc.) — no special libraries needed. Layout (from a real 69 KB sample,
-38 tables / 25 other files):
+Важно, что формат дампа **самоописывающийся**: XML каждой таблицы несёт
+собственные имена столбцов и SQL-типы прямо внутри себя, а *набор
+существующих таблиц* сам перечислен в одной из таблиц (`persistents`).
+Именно это делает формат пригодным для чтения и записи извне — не нужен
+файл схемы, схему можно узнать прямо из самого файла.
+
+Реальные данные приложения (функциональные блоки IDEF0, элементы DFD,
+стрелки, позиции, цвета, шрифты, заметки — всё) хранятся как обобщённая
+модель **«сущность–атрибут–значение» (Entity–Attribute–Value, EAV)**:
+`qualifiers` — это примерно «классы», `elements` — «экземпляры» одного
+квалификатора, `attributes` — «поля», и каждый *тип* атрибута (Text,
+Long, Rectangle, Color, Font, ...) имеет собственную физическую таблицу
+значений с ключом `(attribute_id, element_id)`.
+
+## 2. Формат контейнера: это ZIP
+
+Откройте любой `.rsf` обычным ZIP-инструментом (`unzip`,
+`zipfile.ZipFile`, 7-Zip и т. д.) — никаких специальных библиотек не
+нужно. Структура (по реальному образцу на 69 КБ, 38 таблиц / 25 прочих
+файлов):
 
 ```
 data/
-  application_metadata.xml     Java Properties XML: app name/version, plugin list
-  sequences.xml                Java Properties XML: a couple of custom ID counters
-  application_preferencies.xml key/value app-level settings
-  qualifiers.xml                <-- the EAV tables (see §6)
+  application_metadata.xml     Java Properties XML: имя/версия приложения, список плагинов
+  sequences.xml                Java Properties XML: пара пользовательских счётчиков ID
+  application_preferencies.xml настройки приложения в виде «ключ/значение»
+  qualifiers.xml                <-- EAV-таблицы (см. §6)
   elements.xml
   attributes.xml
   qualifiers_attributes.xml
@@ -86,13 +91,13 @@ data/
   formulas.xml
   formula_dependences.xml
   Core/
-    attribute_texts.xml         <-- one file per (plugin, attribute-type)
+    attribute_texts.xml         <-- по одному файлу на пару (плагин, тип атрибута)
     attribute_longs.xml
     attribute_doubles.xml
     attribute_dates.xml
     attribute_hierarchicals.xml
     attribute_other_elements.xml
-    ... (see §6 for the full list actually seen)
+    ... (полный список реально встреченных — в §6)
   IDEF0/
     attribute_rectangles.xml
     attribute_colors.xml
@@ -101,28 +106,29 @@ data/
     ...
   Eval/
     attribute_functions.xml
-elements/<element_id>/<attribute_id>/<plugin>/<file>   raw attachment/HTML bytes (see §11)
-properties/...             misc app settings (page size, IDEF0 view options)
-user/...                   GUI-only state: window layout, table column widths,
-                            spell-checker config — never touch this, Ramus
-                            regenerates it and doesn't validate it strictly
+elements/<element_id>/<attribute_id>/<plugin>/<file>   сырые байты вложений/HTML (см. §11)
+properties/...             разные настройки приложения (размер страницы, опции просмотра IDEF0)
+user/...                   состояние, относящееся только к GUI: расположение окон, ширина
+                            столбцов таблиц, настройки проверки орфографии — никогда не трогайте
+                            это, Ramus регенерирует это и не проверяет строго
 ```
 
-This exact layout is produced by
+Именно такую структуру производит
 `FileIEngineImpl.writeToStream()` / `saveToFileNotCloseFile()`
-(`core/src/main/java/com/ramussoft/core/impl/FileIEngineImpl.java`), and
-read back by `FileIEngineImpl.open()` in the same file. Loading is
-**tolerant of missing entries**: `loadTable()` just skips a table silently
-if its zip entry doesn't exist (`InputStream stream = zFile.getInputStream(ze); if (stream != null) ...`).
-This tolerance is exploited throughout this document (e.g. §12) to keep
-generated files minimal.
+(`core/src/main/java/com/ramussoft/core/impl/FileIEngineImpl.java`), и
+её же читает обратно `FileIEngineImpl.open()` в том же файле. Загрузка
+**терпима к отсутствующим записям**: `loadTable()` просто молча
+пропускает таблицу, если её записи нет в zip
+(`InputStream stream = zFile.getInputStream(ze); if (stream != null) ...`).
+Эта терпимость используется по всему документу (например, в §12), чтобы
+держать генерируемые файлы минимальными.
 
-## 3. The generic table XML format
+## 3. Обобщённый XML-формат таблицы
 
-Every `data/**/*.xml` file **except** `application_metadata.xml` and
-`sequences.xml` (which are plain `java.util.Properties` XML, see below)
-has this exact shape, produced by
-`core/.../impl/TableToXML.java::store()` and consumed by
+Каждый файл `data/**/*.xml`, **кроме** `application_metadata.xml` и
+`sequences.xml` (это обычный `java.util.Properties` XML, см. ниже), имеет
+именно такую форму, которую производит
+`core/.../impl/TableToXML.java::store()` и потребляет
 `core/.../impl/XMLToTable.java::load()`:
 
 ```xml
@@ -140,31 +146,35 @@ has this exact shape, produced by
 </table>
 ```
 
-Rules (verified against real files):
+Правила (проверены на реальных файлах):
 
-- `<fields>` declares every column **for this file only**, with a small
-  positional `id` (not the same thing as any row's data!) used purely to
-  cross-reference `<f id="...">` inside `<row>` to a column name. Column
-  order in `<fields>` does **not** have to match the physical DB column
-  order — matching happens by **name** (case-insensitive) at import time,
-  so a writer is free to declare columns in any order as long as the `id`s
-  used in `<fields>` and in `<row><f id="...">` agree with each other.
-- A row's `<f id="N">value</f>` is present **only if the underlying SQL
-  value is non-`NULL`**. A present-but-empty string is written as a
-  self-closing tag: `<f id="1"/>`. **A completely absent `<f id="N">` for
-  that row means SQL `NULL`.** This distinction matters and the toolkit
-  preserves it (`rsf_core.NULL` sentinel vs. `""`).
-- `prefix="ramus_"` is the DB table-name prefix Ramus uses internally; it's
-  written into the XML but not actually needed to parse the file (the
-  physical prefix never appears in the zip *paths*, only inside this
-  attribute, which the toolkit preserves verbatim but otherwise ignores).
-- `generate-time` is informational (Java's `new Date().toString()`
-  locale/timezone-dependent format) — cosmetic, safe to leave stale or
-  regenerate.
+- `<fields>` объявляет каждый столбец **только для этого файла**, с
+  небольшим позиционным `id` (это не то же самое, что данные какой-либо
+  строки!), используемым исключительно для сопоставления `<f id="...">`
+  внутри `<row>` с именем столбца. Порядок столбцов в `<fields>` **не
+  обязан** совпадать с физическим порядком столбцов в БД — сопоставление
+  происходит по **имени** (без учёта регистра) при импорте, поэтому тот,
+  кто пишет файл, волен объявлять столбцы в любом порядке, пока `id`,
+  используемые в `<fields>` и в `<row><f id="...">`, согласованы друг с
+  другом.
+- `<f id="N">значение</f>` строки присутствует **только если базовое
+  SQL-значение не `NULL`**. Присутствующая, но пустая строка записывается
+  как самозакрывающийся тег: `<f id="1"/>`. **Полностью отсутствующий
+  `<f id="N">` для этой строки означает SQL `NULL`.** Это различие важно,
+  и набор инструментов его сохраняет (сигнальное значение `rsf_core.NULL`
+  в отличие от `""`).
+- `prefix="ramus_"` — это префикс имён таблиц БД, который Ramus
+  использует внутренне; он записывается в XML, но фактически не нужен для
+  разбора файла (физический префикс никогда не встречается в *путях*
+  внутри zip, только в этом атрибуте, который набор инструментов сохраняет
+  дословно, но иначе игнорирует).
+- `generate-time` — информационное поле (формат Java
+  `new Date().toString()`, зависящий от локали/часового пояса) —
+  косметическое, безопасно оставлять устаревшим или регенерировать.
 
-### `application_metadata.xml` and `sequences.xml`
+### `application_metadata.xml` и `sequences.xml`
 
-These two are standard `java.util.Properties` XML
+Эти два файла — стандартный `java.util.Properties` XML
 (`http://java.sun.com/dtd/properties.dtd`):
 
 ```xml
@@ -178,81 +188,88 @@ These two are standard `java.util.Properties` XML
 <entry key="PluginCount">26</entry>
 <entry key="Plugin_0">Attribute.Core.Hierarchical</entry>
 <entry key="Plugin_1">Core</entry>
-... one entry per plugin ...
+... по одной записи на плагин ...
 </properties>
 ```
 
-- `FileOpenMinimumVersion` is checked against the running app's version on
-  open (`FileIEngineImpl.checkFileVersion()`); a low value like `1.0`
-  is maximally compatible and safe to use for generated files.
-- The `Plugin_N` list is checked against the set of plugins the *running*
-  app actually has loaded (`FileVersionException` if a listed plugin is
-  missing) — so don't list plugins that don't exist. Sticking to the
-  standard `Core` + `IDEF0` (+`Eval`, `Autochange` if you use formulas)
-  plugin set, as in the real sample files, is safe.
-- `sequences.xml` only ever held **one** custom counter in the sample
-  files (`crosspoint_sequence`). It is *not* where element/qualifier/
-  attribute ID counters live — see §7.
+- `FileOpenMinimumVersion` сверяется с версией запущенного приложения при
+  открытии (`FileIEngineImpl.checkFileVersion()`); низкое значение вроде
+  `1.0` максимально совместимо и безопасно для генерируемых файлов.
+- Список `Plugin_N` сверяется с набором плагинов, реально загруженных в
+  *запущенном* приложении (`FileVersionException`, если перечисленного
+  плагина не хватает) — поэтому не перечисляйте несуществующие плагины.
+  Придерживаться стандартного набора плагинов `Core` + `IDEF0` (+`Eval`,
+  `Autochange`, если используются формулы), как в реальных образцах
+  файлов, безопасно.
+- `sequences.xml` в образцах файлов хранил только **один**
+  пользовательский счётчик (`crosspoint_sequence`). Это *не* то место,
+  где живут счётчики id элементов/квалификаторов/атрибутов — см. §7.
 
-## 4. Value encoding rules, per SQL type
+## 4. Правила кодирования значений по SQL-типам
 
-The `type="..."` on each `<field>` controls encoding, matching
-`TableToXML`'s `Converter` classes exactly (all comparisons are
-case-insensitive):
+`type="..."` у каждого `<field>` управляет кодированием, в точности
+повторяя классы `Converter` из `TableToXML` (все сравнения регистро-
+независимы):
 
-| declared `type`                    | Python/meaning                          | Encoding in `<f>` text |
+| объявленный `type`                    | Python/смысл                          | Кодирование в тексте `<f>` |
 |---|---|---|
-| `BIGINT`, `INTEGER`, `int4`, `LONG`, `int8` | integer | plain decimal, e.g. `144` |
-| `BOOLEAN`, `bool`                  | boolean | **`TRUE` / `FALSE`** (uppercase) |
-| `DOUBLE`, `float8`                 | float   | Java `Double.toString()`, e.g. `80.0`, `-124.5` |
-| `CLOB`, `CHAR`, `TEXT`, `bpchar`   | string  | raw text, XML-escaped |
-| `TIMESTAMP`                        | date/time | see below |
-| `BLOB`, `VARBINARY`, `bytea`       | bytes   | custom hex, see below |
+| `BIGINT`, `INTEGER`, `int4`, `LONG`, `int8` | целое число | обычное десятичное, например `144` |
+| `BOOLEAN`, `bool`                  | логическое значение | **`TRUE` / `FALSE`** (в верхнем регистре) |
+| `DOUBLE`, `float8`                 | число с плавающей точкой   | Java `Double.toString()`, например `80.0`, `-124.5` |
+| `CLOB`, `CHAR`, `TEXT`, `bpchar`   | строка  | обычный текст, экранированный по правилам XML |
+| `TIMESTAMP`                        | дата/время | см. ниже |
+| `BLOB`, `VARBINARY`, `bytea`       | байты   | нестандартный hex, см. ниже |
 
-**Booleans render as `TRUE`/`FALSE` uppercase**, *not* `true`/`false`. This
-looks like it should be a bug — `TableToXML`'s own `BoolConverter` calls
-plain `Object.toString()` on a boxed `java.lang.Boolean`, which is defined
-by the JDK to always be lowercase — but the actual type-dispatch only
-special-cases columns whose JDBC type name is exactly `"bool"`
-(`meta.getColumnTypeName(...).equalsIgnoreCase("bool")`); real boolean
-columns report as `"BOOLEAN"`, which **doesn't match**, so they silently
-fall through to the generic string converter, which calls
-`ResultSet.getString()` on a boolean column — and that's what actually
-produces `"TRUE"`/`"FALSE"`. Confirmed byte-for-byte against real files.
-The reader in `XMLToTable` (`Boolean.parseBoolean(...)`) is case-insensitive
-either way, so this is safe to rely on but the toolkit **writes uppercase**
-to match convention.
+**Логические значения записываются как `TRUE`/`FALSE` в верхнем
+регистре**, а *не* `true`/`false`. На первый взгляд это похоже на баг —
+собственный `BoolConverter` в `TableToXML` вызывает обычный
+`Object.toString()` на упакованном `java.lang.Boolean`, для которого JDK
+всегда определяет строчные буквы — но фактическая диспетчеризация по типу
+специально обрабатывает только столбцы, чьё имя JDBC-типа точно равно
+`"bool"` (`meta.getColumnTypeName(...).equalsIgnoreCase("bool")`);
+настоящие булевы столбцы сообщают о себе как `"BOOLEAN"`, что **не
+совпадает**, поэтому они молча попадают в обобщённый строковый
+конвертер, который вызывает `ResultSet.getString()` на булевом столбце —
+и именно это фактически производит `"TRUE"`/`"FALSE"`. Подтверждено
+побайтово на реальных файлах. Читатель в `XMLToTable`
+(`Boolean.parseBoolean(...)`) в любом случае регистронезависим, поэтому на
+это безопасно полагаться, но набор инструментов **пишет в верхнем
+регистре**, следуя соглашению.
 
-**Byte arrays** (`BLOB`/`VARBINARY`/`bytea` — icons, arrow "visual
-attributes" blobs, `VisualData`) use a home-grown hex scheme, from
-`TableToXML.ByteAConverter` / `XMLToTable.ByteAConverter`:
+**Байтовые массивы** (`BLOB`/`VARBINARY`/`bytea` — значки, blob'ы
+«визуальных атрибутов» стрелок, `VisualData`) используют самодельную
+hex-схему из `TableToXML.ByteAConverter` / `XMLToTable.ByteAConverter`:
 
 ```java
-// encode: for each signed byte b, write hex of (b + 128)
+// кодирование: для каждого знакового байта b пишем hex от (b + 128)
 int j = bytes[i]; j += 128; retString.append(digits[j]);   // digits[0..255] = "00".."FF"
-// decode: reverse
+// декодирование: в обратном порядке
 bs[i/2] = (byte) (val - 128);
 ```
 
-Because `128 == 0x80`, "add 128 mod 256" and "flip the top bit" are the
-same operation, so this is exactly `hex(byte XOR 0x80)` / `hex⁻¹(...) XOR 0x80`.
-Implemented in the toolkit as `rsf_core.bytes_to_rsf_hex` /
-`rsf_core.rsf_hex_to_bytes`. **This is not standard hex encoding** — feeding
-a plain-hex tool at this data will silently produce garbage.
+Поскольку `128 == 0x80`, «прибавить 128 по модулю 256» и «инвертировать
+старший бит» — это одна и та же операция, поэтому это ровно
+`hex(байт XOR 0x80)` / `hex⁻¹(...) XOR 0x80`. Реализовано в наборе
+инструментов как `rsf_core.bytes_to_rsf_hex` / `rsf_core.rsf_hex_to_bytes`.
+**Это не стандартное hex-кодирование** — если скормить эти данные
+обычному hex-инструменту, он молча выдаст мусор.
 
-**Timestamps** use `DateFormat.getDateTimeInstance(SHORT, SHORT, Locale.ENGLISH)`,
-which on the JDK the app was built/tested against (pre-JDK9 "COMPAT" locale
-data) renders like `9/3/09 5:23 PM` — no comma, 2-digit year, no leading
-zeros, 12-hour clock. **Confirmed against real file data.** Note: JDK 9+
-switched the default locale data provider to CLDR, whose short pattern for
-`en` *adds a comma* (`9/3/09, 5:23 PM`) — so files written by a Ramus build
-running on a newer JDK may differ here. The toolkit's reader accepts both
-forms; its writer emits the no-comma legacy form to match every sample
-file actually inspected.
+**Временны́е метки** используют
+`DateFormat.getDateTimeInstance(SHORT, SHORT, Locale.ENGLISH)`, что на
+JDK, под который приложение собиралось/тестировалось (данные локали
+старого стиля «COMPAT» до JDK9), отображается как `9/3/09 5:23 PM` — без
+запятой, двузначный год, без ведущих нулей, 12-часовой формат.
+**Подтверждено на реальных данных файлов.** Примечание: JDK 9+ переключил
+провайдер данных локали по умолчанию на CLDR, чей короткий шаблон для
+`en` *добавляет запятую* (`9/3/09, 5:23 PM`) — так что файлы, записанные
+сборкой Ramus, работающей на более новом JDK, могут здесь отличаться.
+Читатель набора инструментов принимает обе формы; его писатель выдаёт
+устаревшую форму без запятой, соответствующую каждому реально изученному
+образцу файла.
 
-## 5. The data model: a self-describing EAV database
+## 5. Модель данных: самоописывающаяся EAV-база данных
 
-Four tables form the backbone (`database-storage/.../database.sql`):
+Основу составляют четыре таблицы (`database-storage/.../database.sql`):
 
 ```sql
 qualifiers(QUALIFIER_ID, QUALIFIER_NAME, QUALIFIER_SYSTEM, ATTRIBUTE_FOR_NAME)
@@ -262,18 +279,18 @@ attributes(ATTRIBUTE_ID, ATTRIBUTE_NAME, ATTRIBUTE_TYPE_PLUGIN_NAME,
 qualifiers_attributes(QUALIFIER_ID, ATTRIBUTE_ID, ATTRIBUTE_SYSTEM, ATTRIBUTE_POSITION)
 ```
 
-Read them as: *"a `qualifier` is a class; an `element` is an instance of one
-qualifier; `qualifiers_attributes` says which `attribute`s (fields) are
-attached to which qualifier (class)."* An IDEF0 diagram page is one
-qualifier; every function box drawn on it is one element under that
-qualifier.
+Читайте их так: *«`qualifier` — это класс; `element` — экземпляр одного
+квалификатора; `qualifiers_attributes` говорит, какие `attribute`
+(поля) прикреплены к какому квалификатору (классу)»*. Одна страница
+диаграммы IDEF0 — это один квалификатор; каждый функциональный блок,
+нарисованный на ней — один элемент под этим квалификатором.
 
-**Where do the actual values live?** Not in `elements` (that table only has
-an ID, a display name, and the owning qualifier). Each *attribute type*
-(`(ATTRIBUTE_TYPE_PLUGIN_NAME, ATTRIBUTE_TYPE_NAME)`, e.g. `("Core","Text")`,
-`("IDEF0","FRectangle")`) has its **own physical table**, keyed by
-`(ATTRIBUTE_ID, ELEMENT_ID)`. This mapping is registered in two more
-self-describing tables:
+**Где живут реальные значения?** Не в `elements` (в этой таблице есть
+только ID, отображаемое имя и владеющий квалификатор). У каждого *типа
+атрибута* (`(ATTRIBUTE_TYPE_PLUGIN_NAME, ATTRIBUTE_TYPE_NAME)`, например
+`("Core","Text")`, `("IDEF0","FRectangle")`) есть **своя собственная
+физическая таблица** с ключом `(ATTRIBUTE_ID, ELEMENT_ID)`. Это
+сопоставление зарегистрировано ещё в двух самоописывающихся таблицах:
 
 ```sql
 persistents(PERSISTENT_ID, TABLE_NAME, TABLE_TYPE, CLASS_NAME, PLUGIN_NAME, TYPE_NAME, PERSISTENT_EXISTS)
@@ -281,26 +298,27 @@ persistent_fields(PERSISTENT_FIELD_ID, PERSISTENT_ID, FIELD_NAME, FIELD_DATABASE
                    FIELD_ID, FIELD_EXISTS, FIELD_TYPE, FIELD_AUTOSET, FIELD_PRIMARY)
 ```
 
-e.g. a real `persistents` row:
+например, реальная строка `persistents`:
 
 ```
 PERSISTENT_ID=4  TABLE_NAME=ramus_attribute_texts  CLASS_NAME=com.ramussoft.core.attribute.simple.TextPersistent
                  PLUGIN_NAME=Core  TYPE_NAME=Text
 ```
 
-...meaning: every attribute whose `(ATTRIBUTE_TYPE_PLUGIN_NAME,
-ATTRIBUTE_TYPE_NAME) == ("Core","Text")` stores its value as a row in
-`data/Core/attribute_texts.xml`. **This means the file genuinely tells you
-its own schema** — you don't need this document at all to do a *generic*
-read of any `.rsf` file (the toolkit's `rsf_core.py` layer does exactly
-this, with zero hardcoded knowledge of IDEF0). This document and
-`rsf_model.py`'s `TYPE_MAP` exist to save you from *re-deriving* which
-table/columns go with which attribute type, and to give typed
-get/set helpers instead of raw row dicts.
+...то есть: каждый атрибут, чей `(ATTRIBUTE_TYPE_PLUGIN_NAME,
+ATTRIBUTE_TYPE_NAME) == ("Core","Text")`, хранит своё значение как строку
+в `data/Core/attribute_texts.xml`. **Это означает, что файл сам
+рассказывает вам свою схему** — этот документ вам вообще не нужен, чтобы
+сделать *обобщённое* чтение любого файла `.rsf` (слой `rsf_core.py`
+набора инструментов делает именно это, с нулевым жёстко закодированным
+знанием об IDEF0). Этот документ и `TYPE_MAP` в `rsf_model.py`
+существуют для того, чтобы избавить вас от *повторного выведения* того,
+какая таблица/столбцы соответствуют какому типу атрибута, и дать типовые
+хелперы get/set вместо сырых словарей строк.
 
-Each physical value table's row shape was read from the corresponding
-Java `@Table`-annotated class in `common/persistent/` and
-`core-simple-attributes` / `idef0-core`, e.g.:
+Форма строки каждой физической таблицы значений была прочитана из
+соответствующего Java-класса с аннотацией `@Table` в `common/persistent/`
+и `core-simple-attributes` / `idef0-core`, например:
 
 ```java
 @Table(name = "rectangles")
@@ -312,118 +330,132 @@ public class FRectanglePersistent extends AbstractPersistent {
 }
 ```
 
-`AbstractPersistent` itself contributes the `(attribute_id, element_id)`
-key columns every value table has. The physical table name is
-`ramus_attribute_<name>` → zip path `data/<plugin>/attribute_<name>.xml`.
+Сам `AbstractPersistent` предоставляет столбцы ключа
+`(attribute_id, element_id)`, которые есть у каждой таблицы значений.
+Имя физической таблицы — `ramus_attribute_<name>` → путь в zip
+`data/<plugin>/attribute_<name>.xml`.
 
-**Row cardinality per `(attribute_id, element_id)` differs by type:**
-most types are exactly **one row** (`ONE_TO_ONE`, the annotation default) —
-a function box has exactly one rectangle, one color, one status. A few are
-explicitly `ONE_TO_MANY` (`OtherElementPersistent`, `HierarchicalPersistent`)
-or have extra primary-key columns beyond `(attribute_id, element_id)`
-(`SectorPointPersistent` adds `x_ordinate_id, y_ordinate_id`) — those can
-have **many** rows sharing the same `(attribute_id, element_id)`, e.g. all
-the points of one arrow's route. The toolkit's `TYPE_MAP` tags each type
-`'scalar'` (single value column), `'struct'` (single row, several named
-columns), or `'list'` (any number of rows) accordingly.
+**Кардинальность строк на `(attribute_id, element_id)` различается по
+типу:** у большинства типов ровно **одна строка** (`ONE_TO_ONE`, значение
+аннотации по умолчанию) — у функционального блока ровно один
+прямоугольник, один цвет, один статус. У нескольких типов явно указано
+`ONE_TO_MANY` (`OtherElementPersistent`, `HierarchicalPersistent`), либо
+есть дополнительные столбцы первичного ключа сверх
+`(attribute_id, element_id)` (`SectorPointPersistent` добавляет
+`x_ordinate_id, y_ordinate_id`) — у них может быть **много** строк с
+одним и тем же `(attribute_id, element_id)`, например все точки маршрута
+одной стрелки. `TYPE_MAP` набора инструментов помечает каждый тип как
+`'scalar'` (единственный столбец значения), `'struct'` (одна строка,
+несколько именованных столбцов) или `'list'` (любое количество строк)
+соответственно.
 
-## 6. Full table reference
+## 6. Полный справочник таблиц
 
-Every table below was seen in at least one of the three real sample files
-(mostly the English "Enterprise activity" sample); columns are exactly as
-declared in that file's own `<fields>`.
+Каждая таблица ниже встречалась хотя бы в одном из трёх реальных образцов
+файлов (в основном в английском образце «Enterprise activity»); столбцы
+приведены точно в том виде, в каком они объявлены в собственных
+`<fields>` этого файла.
 
-### Core tables (not attribute-type-specific)
+### Основные таблицы (не специфичные для типа атрибута)
 
-| zip path | columns | notes |
+| путь в zip | столбцы | примечания |
 |---|---|---|
-| `data/qualifiers.xml` | QUALIFIER_ID, QUALIFIER_NAME, QUALIFIER_SYSTEM, ATTRIBUTE_FOR_NAME | ATTRIBUTE_FOR_NAME points at the "Name" attribute used to label this qualifier's elements |
+| `data/qualifiers.xml` | QUALIFIER_ID, QUALIFIER_NAME, QUALIFIER_SYSTEM, ATTRIBUTE_FOR_NAME | ATTRIBUTE_FOR_NAME указывает на атрибут «Name», используемый для подписи элементов этого квалификатора |
 | `data/elements.xml` | ELEMENT_ID, ELEMENT_NAME, QUALIFIER_ID | |
 | `data/attributes.xml` | ATTRIBUTE_ID, ATTRIBUTE_NAME, ATTRIBUTE_TYPE_PLUGIN_NAME, ATTRIBUTE_TYPE_NAME, ATTRIBUTE_TYPE_COMPARABLE, ATTRIBUTE_SYSTEM | |
-| `data/qualifiers_attributes.xml` | QUALIFIER_ID, ATTRIBUTE_ID, ATTRIBUTE_SYSTEM, ATTRIBUTE_POSITION | which attributes exist on which qualifier, and their display order |
-| `data/persistents.xml` | PERSISTENT_ID, TABLE_NAME, TABLE_TYPE, CLASS_NAME, PLUGIN_NAME, TYPE_NAME, PERSISTENT_EXISTS | registry of every value table (see §5) |
-| `data/persistent_fields.xml` | PERSISTENT_FIELD_ID, PERSISTENT_ID, FIELD_NAME, FIELD_DATABASE_NAME, FIELD_ID, FIELD_EXISTS, FIELD_TYPE, FIELD_AUTOSET, FIELD_PRIMARY | column registry for each value table |
-| `data/application_preferencies.xml` | OPTION_KEY, OPTION_VALUE | flat app settings |
-| `data/streams.xml` | STREAM_ID | index of every raw-attachment path used elsewhere in the zip (see §11) |
-| `data/formulas.xml` | ELEMENT_ID, ATTRIBUTE_ID, AUTORECALCULATE, FORMULA | Eval-plugin formula text, keyed by the cell it's attached to |
-| `data/formula_dependences.xml` | SOURCE_ELEMENT_ID, SOURCE_ATTRIBUTE_ID, ELEMENT_ID, ATTRIBUTE_ID | formula dependency graph edges |
+| `data/qualifiers_attributes.xml` | QUALIFIER_ID, ATTRIBUTE_ID, ATTRIBUTE_SYSTEM, ATTRIBUTE_POSITION | какие атрибуты есть у какого квалификатора и порядок их отображения |
+| `data/persistents.xml` | PERSISTENT_ID, TABLE_NAME, TABLE_TYPE, CLASS_NAME, PLUGIN_NAME, TYPE_NAME, PERSISTENT_EXISTS | реестр каждой таблицы значений (см. §5) |
+| `data/persistent_fields.xml` | PERSISTENT_FIELD_ID, PERSISTENT_ID, FIELD_NAME, FIELD_DATABASE_NAME, FIELD_ID, FIELD_EXISTS, FIELD_TYPE, FIELD_AUTOSET, FIELD_PRIMARY | реестр столбцов для каждой таблицы значений |
+| `data/application_preferencies.xml` | OPTION_KEY, OPTION_VALUE | плоские настройки приложения |
+| `data/streams.xml` | STREAM_ID | индекс каждого сырого пути вложения, используемого где-либо ещё в архиве (см. §11) |
+| `data/formulas.xml` | ELEMENT_ID, ATTRIBUTE_ID, AUTORECALCULATE, FORMULA | текст формулы плагина Eval, с ключом на ту ячейку, к которой она прикреплена |
+| `data/formula_dependences.xml` | SOURCE_ELEMENT_ID, SOURCE_ATTRIBUTE_ID, ELEMENT_ID, ATTRIBUTE_ID | рёбра графа зависимостей формул |
 
-Newer files (2.0+, per `update4.sql`) may additionally carry: `data/branches.xml`,
-`data/attributes_history.xml`, `data/qualifiers_history.xml`,
-`data/attributes_data_metadata.xml`, `data/formulas_data_metadata.xml`,
-`data/formula_dependences_data_metadata.xml` — the model-branching
-("compare/merge model versions") feature. **None of these were present in
-any of the three real sample files** (all pre-date that feature), and per
-§12 they're entirely optional for files targeting a single branch/trunk.
+Более новые файлы (2.0+, по `update4.sql`) могут дополнительно содержать:
+`data/branches.xml`, `data/attributes_history.xml`,
+`data/qualifiers_history.xml`, `data/attributes_data_metadata.xml`,
+`data/formulas_data_metadata.xml`,
+`data/formula_dependences_data_metadata.xml` — функцию ветвления модели
+(«сравнение/слияние версий модели»). **Ни одной из них не было ни в одном
+из трёх реальных образцов файлов** (все они старше этой функции), и,
+согласно §12, они полностью опциональны для файлов, нацеленных на одну
+ветку/ствол.
 
-### Attribute-type value tables (Core plugin)
+### Таблицы значений по типу атрибута (плагин Core)
 
-| zip path | columns | Java class | cardinality |
+| путь в zip | столбцы | Java-класс | кардинальность |
 |---|---|---|---|
-| `data/Core/attribute_texts.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(CLOB) | `TextPersistent` | one |
-| `data/Core/attribute_longs.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(BIGINT) | `LongPersistent` | one |
-| `data/Core/attribute_doubles.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(DOUBLE) | `DoublePersistent` | one |
-| `data/Core/attribute_dates.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(TIMESTAMP) | `DatePersistent` | one |
-| `data/Core/attribute_currencies.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(DOUBLE) | `CurrencyPersistent` | one |
-| `data/Core/attribute_booleans.xml`* | ATTRIBUTE_ID, ELEMENT_ID, VALUE(INTEGER 0/1) | `BooleanPersistent` | one |
-| `data/Core/attribute_variants.xml` | ATTRIBUTE_ID, ELEMENT_ID, VARIANT_ID(BIGINT) | `VariantPersistent` | one |
-| `data/Core/attribute_variant_properties.xml` | ATTRIBUTE, POSITION, VALUE, VARIANT_ID | `VariantPropertyPersistent` | list — the option list backing a Variant-type attribute |
-| `data/Core/attribute_icons.xml` | ATTRIBUTE_ID, ELEMENT_ID, ICON(bytes), NAME | `IconPersistent` | one |
-| `data/Core/attribute_attached_files.xml` | ATTRIBUTE_ID, ELEMENT_ID, LAST_MODIFIED_TIME, NAME, PATH, UPLOAD_TIME | `FilePersistent` (metadata only — file bytes are a stream, §11) | one |
-| `data/Core/attribute_other_elements.xml` | ATTRIBUTE_ID, ELEMENT_ID, OTHER_ELEMENT(BIGINT) | `OtherElementPersistent` | **list** (ONE_TO_MANY) |
-| `data/Core/attribute_other_element_properties.xml` | ATTRIBUTE, QUALIFIER, QUALIFIER_ATTRIBUTE | `OtherElementPropertyPersistent` | per-qualifier config, not per-element |
-| `data/Core/attribute_hierarchicals.xml` | ATTRIBUTE_ID, ELEMENT_ID, ICON_ID, PARENT_ELEMENT_ID, PREVIOUS_ELEMENT_ID | `HierarchicalPersistent` | **list** (ONE_TO_MANY); `-1`/`0` sentinel = no parent/no previous sibling — used to build tree/order UI for elements of a qualifier |
-| `data/Core/attribute_element_lists.xml` | ATTRIBUTE_ID, ELEMENT1_ID, ELEMENT2_ID | `ElementListPersistent` | many-to-many edge table (+ optional CONNECTION_TYPE text) |
-| `data/Core/attribute_element_list_properties.xml` | ATTRIBUTE_ID, QUALIFIER1, QUALIFIER2 | `ElementListPropertyPersistent` | which qualifier pairs a given ElementList-type attribute may connect |
+| `data/Core/attribute_texts.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(CLOB) | `TextPersistent` | одна |
+| `data/Core/attribute_longs.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(BIGINT) | `LongPersistent` | одна |
+| `data/Core/attribute_doubles.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(DOUBLE) | `DoublePersistent` | одна |
+| `data/Core/attribute_dates.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(TIMESTAMP) | `DatePersistent` | одна |
+| `data/Core/attribute_currencies.xml` | ATTRIBUTE_ID, ELEMENT_ID, VALUE(DOUBLE) | `CurrencyPersistent` | одна |
+| `data/Core/attribute_booleans.xml`* | ATTRIBUTE_ID, ELEMENT_ID, VALUE(INTEGER 0/1) | `BooleanPersistent` | одна |
+| `data/Core/attribute_variants.xml` | ATTRIBUTE_ID, ELEMENT_ID, VARIANT_ID(BIGINT) | `VariantPersistent` | одна |
+| `data/Core/attribute_variant_properties.xml` | ATTRIBUTE, POSITION, VALUE, VARIANT_ID | `VariantPropertyPersistent` | list — список вариантов, на котором держится атрибут типа Variant |
+| `data/Core/attribute_icons.xml` | ATTRIBUTE_ID, ELEMENT_ID, ICON(байты), NAME | `IconPersistent` | одна |
+| `data/Core/attribute_attached_files.xml` | ATTRIBUTE_ID, ELEMENT_ID, LAST_MODIFIED_TIME, NAME, PATH, UPLOAD_TIME | `FilePersistent` (только метаданные — байты файла — это поток, см. §11) | одна |
+| `data/Core/attribute_other_elements.xml` | ATTRIBUTE_ID, ELEMENT_ID, OTHER_ELEMENT(BIGINT) | `OtherElementPersistent` | **список** (ONE_TO_MANY) |
+| `data/Core/attribute_other_element_properties.xml` | ATTRIBUTE, QUALIFIER, QUALIFIER_ATTRIBUTE | `OtherElementPropertyPersistent` | конфигурация на квалификатор, а не на элемент |
+| `data/Core/attribute_hierarchicals.xml` | ATTRIBUTE_ID, ELEMENT_ID, ICON_ID, PARENT_ELEMENT_ID, PREVIOUS_ELEMENT_ID | `HierarchicalPersistent` | **список** (ONE_TO_MANY); сигнальное значение `-1`/`0` = нет родителя/нет предыдущего соседа — используется для построения UI дерева/порядка элементов квалификатора |
+| `data/Core/attribute_element_lists.xml` | ATTRIBUTE_ID, ELEMENT1_ID, ELEMENT2_ID | `ElementListPersistent` | таблица рёбер «многие-ко-многим» (+ опциональный текст CONNECTION_TYPE) |
+| `data/Core/attribute_element_list_properties.xml` | ATTRIBUTE_ID, QUALIFIER1, QUALIFIER2 | `ElementListPropertyPersistent` | какие пары квалификаторов может соединять данный атрибут типа ElementList |
 
-\* not present in any sample inspected (no Boolean-type attribute happened to be used), but derived directly from `BooleanPersistent.java`; column names may need on-the-fly confirmation if you rely on it.
+\* не встречено ни в одном изученном образце (не оказалось использованного
+атрибута типа Boolean), но выведено напрямую из `BooleanPersistent.java`;
+имена столбцов могут потребовать подтверждения «на лету», если вы на них
+полагаетесь.
 
-`Core.HTMLText` (rich-text "Description" fields) and `Core.File` (arbitrary
-attachments) are **not** EAV rows at all — see §11.
+`Core.HTMLText` (форматированные текстовые поля «Description») и
+`Core.File` (произвольные вложения) — это **вообще не** строки EAV — см.
+§11.
 
-### Attribute-type value tables (IDEF0 plugin)
+### Таблицы значений по типу атрибута (плагин IDEF0)
 
-| zip path | columns | Java class | cardinality |
+| путь в zip | столбцы | Java-класс | кардинальность |
 |---|---|---|---|
-| `data/IDEF0/attribute_rectangles.xml` | ATTRIBUTE_ID, ELEMENT_ID, HEIGHT, WIDTH, X, Y (all DOUBLE) | `FRectanglePersistent` | one — box position/size |
-| `data/IDEF0/attribute_colors.xml` | ATTRIBUTE_ID, ELEMENT_ID, COLOR(INTEGER) | `ColorPersistent` | one — packed ARGB, see §8 |
-| `data/IDEF0/attribute_fonts.xml` | ATTRIBUTE_ID, ELEMENT_ID, NAME(CLOB), SIZE(INTEGER), STYLE(INTEGER) | `FontPersistent` | one — STYLE is AWT `Font` style bits (0=plain,1=bold,2=italic,3=bold+italic) |
-| `data/IDEF0/attribute_statuses.xml` | ATTRIBUTE_ID, ELEMENT_ID, OTHER_NAME(CLOB), TYPE(INTEGER) | `StatusPersistent` | one |
-| `data/IDEF0/attribute_function_types.xml` | ATTRIBUTE_ID, ELEMENT_ID, TYPE(INTEGER) | `FunctionTypePersistent` | one — this is what `F_TYPE` uses |
-| `data/IDEF0/attribute_function_ouners.xml` | ATTRIBUTE_ID, ELEMENT_ID, OUNER_ID(BIGINT) | `FunctionOunerPersistent` | one (`OUNER_ID`, sic — original code's spelling) |
-| `data/IDEF0/attribute_decomposition_types.xml` | ATTRIBUTE_ID, ELEMENT_ID, TYPE(INTEGER) | `DecompositionTypePersistent` | one |
-| `data/IDEF0/attribute_visual_datas.xml` | ATTRIBUTE_ID, ELEMENT_ID, DATA(bytes) | `VisualDataPersisitent` | one — opaque cached-rendering blob, safe to leave unset (F_VISUAL_DATA is used in only one legacy code path, `NFunction.PROPERTIES`) |
-| `data/IDEF0/attribute_any_to_any_elements.xml` | ATTRIBUTE_ID, ELEMENT_ID, OTHER_ELEMENT(BIGINT) | `AnyToAnyPersistent` | list |
-| `data/IDEF0/attribute_model_preferences.xml` | ATTRIBUTE_ID, CHANGE_DATE, CREATE_DATE, DEFINITION, ELEMENT_ID, PROJECT_AUTOR, PROJECT_NAME, USED_AT | `IDEF0ModelPreferencesPersistent` | one — the model-info fields shown in Ramus's "Model Properties" dialog |
-| `data/IDEF0/attribute_readers.xml` | ATTRIBUTE_ID, DATE, ELEMENT_ID, READER(CLOB) | `ReaderPersistent` | one row per reviewer entry, keyed additionally somehow — treat as list |
-| `data/IDEF0/attribute_sectors.xml` | ALTERNATIVE_TEXT, ATTRIBUTE_ID, CREATE_POS, CREATE_STATE, ELEMENT_ID, SHOW_TEXT, VISUAL_ATTRIBUTES(bytes)[, TEXT_ALIGMENT — newer files] | `SectorPersistent` | one — see §10, arrows |
-| `data/IDEF0/attribute_sector_borders.xml` | ATTRIBUTE_ID, BORDER_TYPE, CROSSPOINT, ELEMENT_ID, FUNCTION, FUNCTION_TYPE, TUNNEL_SOFT | `SectorBorderPersistent` | one — see §10 |
-| `data/IDEF0/attribute_sector_points.xml`† | ATTRIBUTE_ID, ELEMENT_ID, X_ORDINATE_ID, Y_ORDINATE_ID, X_POSITION, Y_POSITION, POINT_TYPE, POSITION | `SectorPointPersistent` | **list**, extra PK columns — see §10 |
-| `data/IDEF0/attribute_sector_properties.xml`† | ATTRIBUTE_ID, ELEMENT_ID, SHOW_TILDA, SHOW_TEXT, TRANSPARENT, TILDA_POS, TEXT_X, TEXT_Y, TEXT_WIDTH, TEXT_HIEGHT (sic) | `SectorPropertiesPersistent` | one |
+| `data/IDEF0/attribute_rectangles.xml` | ATTRIBUTE_ID, ELEMENT_ID, HEIGHT, WIDTH, X, Y (все DOUBLE) | `FRectanglePersistent` | одна — позиция/размер блока |
+| `data/IDEF0/attribute_colors.xml` | ATTRIBUTE_ID, ELEMENT_ID, COLOR(INTEGER) | `ColorPersistent` | одна — упакованный ARGB, см. §8 |
+| `data/IDEF0/attribute_fonts.xml` | ATTRIBUTE_ID, ELEMENT_ID, NAME(CLOB), SIZE(INTEGER), STYLE(INTEGER) | `FontPersistent` | одна — STYLE — это биты стиля AWT `Font` (0=обычный,1=жирный,2=курсив,3=жирный+курсив) |
+| `data/IDEF0/attribute_statuses.xml` | ATTRIBUTE_ID, ELEMENT_ID, OTHER_NAME(CLOB), TYPE(INTEGER) | `StatusPersistent` | одна |
+| `data/IDEF0/attribute_function_types.xml` | ATTRIBUTE_ID, ELEMENT_ID, TYPE(INTEGER) | `FunctionTypePersistent` | одна — именно это использует `F_TYPE` |
+| `data/IDEF0/attribute_function_ouners.xml` | ATTRIBUTE_ID, ELEMENT_ID, OUNER_ID(BIGINT) | `FunctionOunerPersistent` | одна (`OUNER_ID`, да, так в оригинальном коде — опечатка сохранена) |
+| `data/IDEF0/attribute_decomposition_types.xml` | ATTRIBUTE_ID, ELEMENT_ID, TYPE(INTEGER) | `DecompositionTypePersistent` | одна |
+| `data/IDEF0/attribute_visual_datas.xml` | ATTRIBUTE_ID, ELEMENT_ID, DATA(байты) | `VisualDataPersisitent` | одна — непрозрачный кэшированный blob отрисовки, безопасно оставлять неустановленным (F_VISUAL_DATA используется только в одном устаревшем пути кода, `NFunction.PROPERTIES`) |
+| `data/IDEF0/attribute_any_to_any_elements.xml` | ATTRIBUTE_ID, ELEMENT_ID, OTHER_ELEMENT(BIGINT) | `AnyToAnyPersistent` | список |
+| `data/IDEF0/attribute_model_preferences.xml` | ATTRIBUTE_ID, CHANGE_DATE, CREATE_DATE, DEFINITION, ELEMENT_ID, PROJECT_AUTOR, PROJECT_NAME, USED_AT | `IDEF0ModelPreferencesPersistent` | одна — поля информации о модели, показываемые в диалоге Ramus «Свойства модели» |
+| `data/IDEF0/attribute_readers.xml` | ATTRIBUTE_ID, DATE, ELEMENT_ID, READER(CLOB) | `ReaderPersistent` | одна строка на запись рецензента, с дополнительным ключом каким-то образом — считать списком |
+| `data/IDEF0/attribute_sectors.xml` | ALTERNATIVE_TEXT, ATTRIBUTE_ID, CREATE_POS, CREATE_STATE, ELEMENT_ID, SHOW_TEXT, VISUAL_ATTRIBUTES(байты)[, TEXT_ALIGMENT — в более новых файлах] | `SectorPersistent` | одна — см. §10, стрелки |
+| `data/IDEF0/attribute_sector_borders.xml` | ATTRIBUTE_ID, BORDER_TYPE, CROSSPOINT, ELEMENT_ID, FUNCTION, FUNCTION_TYPE, TUNNEL_SOFT | `SectorBorderPersistent` | одна — см. §10 |
+| `data/IDEF0/attribute_sector_points.xml`† | ATTRIBUTE_ID, ELEMENT_ID, X_ORDINATE_ID, Y_ORDINATE_ID, X_POSITION, Y_POSITION, POINT_TYPE, POSITION | `SectorPointPersistent` | **список**, дополнительные столбцы первичного ключа — см. §10 |
+| `data/IDEF0/attribute_sector_properties.xml`† | ATTRIBUTE_ID, ELEMENT_ID, SHOW_TILDA, SHOW_TEXT, TRANSPARENT, TILDA_POS, TEXT_X, TEXT_Y, TEXT_WIDTH, TEXT_HIEGHT (да, опечатка) | `SectorPropertiesPersistent` | одна |
 
-† not present in the sample files inspected (they predate this table /
-never used it); column list derived directly from the Java source.
+† не встречены в изученных образцах файлов (они старше этой таблицы /
+никогда её не использовали); список столбцов выведен напрямую из
+исходного кода Java.
 
-### Other plugins seen
+### Другие встреченные плагины
 
-| zip path | columns | notes |
+| путь в zip | столбцы | примечания |
 |---|---|---|
-| `data/Eval/attribute_functions.xml` | ATTRIBUTE_ID, AUTOCHANGE, ELEMENT_ID, FUNCTION(CLOB), QUALIFIER_ATTRIBUTE_ID, QUALIFIER_TABLE_ATTRIBUTE_ID | formula-plugin per-cell config |
+| `data/Eval/attribute_functions.xml` | ATTRIBUTE_ID, AUTOCHANGE, ELEMENT_ID, FUNCTION(CLOB), QUALIFIER_ATTRIBUTE_ID, QUALIFIER_TABLE_ATTRIBUTE_ID | конфигурация плагина формул на каждую ячейку |
 
-## 7. ID allocation and why external edits are safe
+## 7. Выделение ID и почему внешние правки безопасны
 
-`ELEMENT_ID` / `QUALIFIER_ID` / `ATTRIBUTE_ID` are each their own
-independent counter. At runtime Ramus uses real SQL sequences
-(`CREATE SEQUENCE ramus_elements_sequence START 1`, etc.) — but **those
-sequences are not part of the exported file** and are *not* restored from
-`sequences.xml` (that file only ever holds the two IDEF0-plugin custom
-counters, `crosspoint_sequence`/`ordinates__sequence`; it has nothing to do
-with element/qualifier/attribute IDs).
+`ELEMENT_ID` / `QUALIFIER_ID` / `ATTRIBUTE_ID` — каждый со своим
+независимым счётчиком. Во время работы Ramus использует настоящие
+SQL-последовательности (`CREATE SEQUENCE ramus_elements_sequence START
+1` и т. д.) — но **эти последовательности не входят в экспортированный
+файл** и *не* восстанавливаются из `sequences.xml` (в этом файле живут
+только два пользовательских счётчика плагина IDEF0,
+`crosspoint_sequence`/`ordinates__sequence`; он не имеет никакого
+отношения к ID элементов/квалификаторов/атрибутов).
 
-So how does Ramus avoid ID collisions after loading a file whose IDs were
-inserted directly (bypassing the sequence) and are way ahead of the fresh
-DB's sequence counter (which restarts at 1 every time)? Every creation
-path re-syncs on the fly, e.g. `IEngineImpl.createElement()`:
+Так как же Ramus избегает коллизий ID после загрузки файла, чьи ID были
+вставлены напрямую (в обход последовательности) и далеко опережают
+счётчик последовательности свежей БД (который каждый раз перезапускается
+с 1)? Каждый путь создания синхронизируется на лету, например
+`IEngineImpl.createElement()`:
 
 ```java
 if (elementId == -1) {
@@ -435,229 +467,261 @@ if (elementId == -1) {
 }
 ```
 
-i.e. it keeps drawing from the sequence until the value exceeds the
-current `MAX(id)` in the table. **Practical consequence: any tool
-(including this one) can safely assign new IDs by taking
-`max(existing ids in that table) + 1`.** Ramus will never hand out a
-colliding ID later, no matter how far "ahead" your externally-assigned IDs
-are. `rsf_model.Model.new_element_id()` / `new_qualifier_id()` /
-`new_attribute_id()` do exactly this.
+то есть он продолжает брать значения из последовательности, пока
+значение не превысит текущий `MAX(id)` в таблице. **Практическое
+следствие: любой инструмент (включая этот) может безопасно назначать
+новые ID, беря `max(существующие id в этой таблице) + 1`.** Ramus
+никогда впоследствии не выдаст коллизирующий ID, как бы далеко
+«впереди» ни были ваши внешне назначенные ID.
+`rsf_model.Model.new_element_id()` / `new_qualifier_id()` /
+`new_attribute_id()` делают именно это.
 
-(This was verified by reading the Java source for `createElement`,
-`createAttribute`, `createQualifier` — all three follow the identical
-pattern — not by running the app; see [Verification](#verification) for
-what *was* tested end-to-end.)
+(Это было проверено чтением исходного кода Java для `createElement`,
+`createAttribute`, `createQualifier` — все три следуют идентичному
+шаблону — а не запуском приложения; что *было* проверено
+сквозным тестированием, см. [раздел «Проверка»](#14-проверка).)
 
-## 8. The IDEF0 "function box" attribute set
+## 8. Набор атрибутов «функционального блока» IDEF0
 
-Whenever a qualifier represents an IDEF0 function-box container (an
-"is-a-diagram-page" qualifier), `IDEF0Plugin.checkIDEF0Attributes()`
-guarantees it carries this exact attribute set (confirmed against real
-file data — this is qualifier 9, "Enterprise activity", the root diagram,
-in the English sample):
+Всякий раз, когда квалификатор представляет контейнер функционального
+блока IDEF0 (квалификатор «является страницей диаграммы»),
+`IDEF0Plugin.checkIDEF0Attributes()` гарантирует, что у него есть именно
+этот набор атрибутов (подтверждено на реальных данных файла — это
+квалификатор 9, «Enterprise activity», корневая диаграмма, в английском
+образце):
 
-| ATTRIBUTE_NAME | plugin.type | meaning | value shape |
+| ATTRIBUTE_NAME | plugin.type | значение | форма значения |
 |---|---|---|---|
-| `Name` | Core.Text | box label (also mirrored into `elements.ELEMENT_NAME`) | string |
-| `Description` | Core.HTMLText | rich-text notes | stream, see §11 |
-| `F_VISUAL_DATA` | IDEF0.VisualData | opaque render cache | bytes, safe to omit |
-| `F_BACKGROUND` | IDEF0.Color | fill color | packed ARGB int, see below |
-| `F_FOREGROUND` | IDEF0.Color | border/text color | packed ARGB int |
-| `F_BOUNDS` | IDEF0.FRectangle | position + size on the page | `{X, Y, WIDTH, HEIGHT}` doubles |
-| `F_FONT` | IDEF0.Font | label font | `{NAME, STYLE, SIZE}` |
-| `F_STATUS` | IDEF0.Status | review/workflow status | `{TYPE:int, OTHER_NAME:str}` |
-| `F_TYPE` | IDEF0.Type | box kind (function/`3` seen on every ordinary box in the samples; other values are DFD-related — not enumerated here) | int |
-| `F_OUNER_ID` | IDEF0.OunerId | (sic) some kind of owner reference — not fully traced, see §9 | long |
-| `F_DECOMPOSITION_TYPE` | IDEF0.DecompositionType | IDEF0 vs DFD vs ... for this box's child diagram | int |
-| `F_AUTHOR` | Core.Text | | string |
-| `F_CREATE_DATE` / `F_REV_DATE` / `F_SYSTEM_REV_DATE` | Core.Date | | timestamp string |
-| `F_LINK` | Core.Long | cross-reference to another element (glossary term, etc.) | long |
-| `F_SECTOR_FUNCTION`, `F_SECTOR_STREAM`, `F_STREAM_NAME`, `F_SECTOR_ATTRIBUTE`, `F_SECTOR_BORDER_START`, `F_SECTOR_BORDER_END`, `F_STREAM_ADDED` | various | arrow-routing plumbing | see §10 |
-| `F_BASE_FUNCTION_QUALIFIER_ID` | Core.Long | **only actually attached to the `F_BASE_FUNCTIONS` system qualifier**, not to ordinary boxes — see §9 | long |
-| `F_PROJECT_PREFERENCES` | IDEF0.ProjectPreferences | model metadata (only meaningful on the model-root entry) | struct |
+| `Name` | Core.Text | подпись блока (также отражается в `elements.ELEMENT_NAME`) | строка |
+| `Description` | Core.HTMLText | форматированные текстовые заметки | поток, см. §11 |
+| `F_VISUAL_DATA` | IDEF0.VisualData | непрозрачный кэш отрисовки | байты, можно опускать |
+| `F_BACKGROUND` | IDEF0.Color | цвет заливки | упакованное целое ARGB, см. ниже |
+| `F_FOREGROUND` | IDEF0.Color | цвет границы/текста | упакованное целое ARGB |
+| `F_BOUNDS` | IDEF0.FRectangle | положение + размер на странице | числа с плавающей точкой `{X, Y, WIDTH, HEIGHT}` |
+| `F_FONT` | IDEF0.Font | шрифт подписи | `{NAME, STYLE, SIZE}` |
+| `F_STATUS` | IDEF0.Status | статус рецензирования/рабочего процесса | `{TYPE:int, OTHER_NAME:str}` |
+| `F_TYPE` | IDEF0.Type | вид блока (function/`3` встречается на каждом обычном блоке в образцах; остальные значения относятся к DFD — здесь не перечислены) | int |
+| `F_OUNER_ID` | IDEF0.OunerId | (да, опечатка в оригинале) какая-то ссылка на владельца — прослежено не полностью, см. §9 | long |
+| `F_DECOMPOSITION_TYPE` | IDEF0.DecompositionType | IDEF0 против DFD против ... для дочерней диаграммы этого блока | int |
+| `F_AUTHOR` | Core.Text | | строка |
+| `F_CREATE_DATE` / `F_REV_DATE` / `F_SYSTEM_REV_DATE` | Core.Date | | строка временной метки |
+| `F_LINK` | Core.Long | перекрёстная ссылка на другой элемент (термин глоссария и т. п.) | long |
+| `F_SECTOR_FUNCTION`, `F_SECTOR_STREAM`, `F_STREAM_NAME`, `F_SECTOR_ATTRIBUTE`, `F_SECTOR_BORDER_START`, `F_SECTOR_BORDER_END`, `F_STREAM_ADDED` | разные | внутренняя механика маршрутизации стрелок | см. §10 |
+| `F_BASE_FUNCTION_QUALIFIER_ID` | Core.Long | **фактически прикреплён только к системному квалификатору `F_BASE_FUNCTIONS`**, а не к обычным блокам — см. §9 | long |
+| `F_PROJECT_PREFERENCES` | IDEF0.ProjectPreferences | метаданные модели (имеют смысл только на записи-корне модели) | struct |
 
-**Color encoding**: `java.awt.Color.getRGB()` = packed `0xAARRGGBB`,
-reinterpreted as a **signed 32-bit int**. Pure opaque green
-(`0xFF00FF00`, Ramus's default function-box fill) is `-16711936`; opaque
-black is `-16777216`. Confirmed against every sample file (every ordinary
-function box uses exactly these two values for background/foreground).
-`rsf_model.argb(r, g, b, a=255)` / `unpack_argb(value)` convert between
-0–255 RGBA and this representation.
+**Кодирование цвета**: `java.awt.Color.getRGB()` = упакованное
+`0xAARRGGBB`, переинтерпретированное как **знаковое 32-битное целое**.
+Чистый непрозрачный зелёный (`0xFF00FF00`, цвет заливки блока по
+умолчанию в Ramus) — это `-16711936`; непрозрачный чёрный — это
+`-16777216`. Подтверждено на каждом образце файла (каждый обычный
+функциональный блок использует именно эти два значения для фона/переднего
+плана). `rsf_model.argb(r, g, b, a=255)` / `unpack_argb(value)`
+преобразуют между 0–255 RGBA и этим представлением.
 
-## 9. Decomposition hierarchy (partially understood)
+## 9. Иерархия декомпозиции (изучена частично)
 
-**Confirmed, from real file data:** there is a system qualifier named
-`F_BASE_FUNCTIONS` (id 8 in the sample). Its **elements** (not ordinary
-function boxes — separate bookkeeping elements, blank `ELEMENT_NAME`) each
-carry `F_BASE_FUNCTION_QUALIFIER_ID` pointing at the qualifier that is a
-**top-level model's root diagram**. In the sample: element 3 under
-qualifier 8 has `F_BASE_FUNCTION_QUALIFIER_ID = 9`, and qualifier 9 is
-indeed "Enterprise activity", the root page, whose elements are the boxes
-you see when you open the file. `qualifiers_attributes.xml` confirms
-`F_BASE_FUNCTION_QUALIFIER_ID` (attribute id 35) is attached **only** to
-qualifier 8 — no ordinary function-box qualifier carries it.
+**Подтверждено, по реальным данным файла:** существует системный
+квалификатор с именем `F_BASE_FUNCTIONS` (id 8 в образце). Каждый его
+**элемент** (не обычные функциональные блоки — отдельные учётные
+элементы, с пустым `ELEMENT_NAME`) несёт
+`F_BASE_FUNCTION_QUALIFIER_ID`, указывающий на квалификатор, являющийся
+**корневой диаграммой модели верхнего уровня**. В образце: элемент 3 под
+квалификатором 8 имеет `F_BASE_FUNCTION_QUALIFIER_ID = 9`, и квалификатор
+9 — это действительно «Enterprise activity», корневая страница, чьи
+элементы — это те блоки, которые вы видите при открытии файла.
+`qualifiers_attributes.xml` подтверждает, что
+`F_BASE_FUNCTION_QUALIFIER_ID` (id атрибута 35) прикреплён **только** к
+квалификатору 8 — ни один обычный квалификатор функционального блока его
+не несёт.
 
-**Not confirmed / explicitly out of scope:** how an *ordinary* function
-box (e.g. element 80, "Administrative processes", sitting on the root
-page) gets linked to *its own* child decomposition diagram when a user
-double-clicks it in the GUI and draws a lower-level diagram. Tracing
-`idef0-common/.../pb/data/negine/NDataPlugin.java` and
-`IDEF0Plugin.isFunction()` / `findElementForBaseFunction()` shows this
-goes through more GUI-side virtualization logic (a `RowSet`/`NFunction`
-wrapper keyed off `IDEF0Plugin.getBaseFunctions()`) than a single stamped
-attribute value, and involves `F_OUNER_ID` in a way that wasn't fully
-pinned down from static reading alone — this would need either running the
-actual Java app and diffing file state before/after using "Decompose", or
-substantially more time tracing `NDataPlugin`/`NFunction`/`SectorRefactor`.
+**Не подтверждено / явно вне рамок:** как *обычный* функциональный блок
+(например, элемент 80, «Administrative processes», лежащий на корневой
+странице) связывается с *собственной* дочерней диаграммой декомпозиции,
+когда пользователь дважды кликает по нему в GUI и рисует диаграмму более
+низкого уровня. Отслеживание
+`idef0-common/.../pb/data/negine/NDataPlugin.java` и
+`IDEF0Plugin.isFunction()` / `findElementForBaseFunction()` показывает,
+что это проходит через больше логики виртуализации на стороне GUI
+(обёртка `RowSet`/`NFunction`, привязанная к
+`IDEF0Plugin.getBaseFunctions()`), чем через единственное проставленное
+значение атрибута, и как-то вовлекает `F_OUNER_ID`, что не было полностью
+установлено одним лишь статическим чтением — для этого потребовалось бы
+либо запустить настоящее Java-приложение и сравнить состояние файла
+до/после использования «Decompose», либо существенно больше времени на
+трассировку `NDataPlugin`/`NFunction`/`SectorRefactor`.
 
-**What the toolkit gives you instead:**
-- `Model.clone_qualifier_as_container(source_qualifier_id, name)` — the
-  practical way to get a *valid new diagram page*: it copies the entire
-  attribute set from an existing, known-good Function qualifier (found in
-  a template file) onto a brand-new qualifier, rather than trying to
-  bootstrap the IDEF0 system-attribute set from nothing. This was tested
-  end-to-end (§14).
+**Что вместо этого даёт набор инструментов:**
+- `Model.clone_qualifier_as_container(source_qualifier_id, name)` —
+  практичный способ получить *валидную новую страницу диаграммы*: он
+  копирует весь набор атрибутов с существующего, заведомо корректного
+  квалификатора Function (найденного в файле-шаблоне) на совершенно
+  новый квалификатор, вместо попытки собрать системный набор атрибутов
+  IDEF0 с нуля. Это было протестировано сквозным образом (§14).
 - `Model.register_model_root(base_functions_element_id, root_qualifier_id)`
-  — sets up a *new top-level model* the same way element 3 does in the
-  sample, so a freshly cloned diagram at least shows up as its own
-  independent model root.
-- Explicitly **not provided**: a "link this box to that child diagram"
-  call, because it isn't verified. If you need this, the honest next step
-  is tracing `NDataPlugin.getRowSet()` / `NFunction` further, or
-  instrumenting a real Ramus build.
+  — настраивает *новую модель верхнего уровня* так же, как это делает
+  элемент 3 в образце, чтобы свежеклонированная диаграмма как минимум
+  отображалась как собственный независимый корень модели.
+- Явно **не предоставляется**: вызов «связать этот блок с той дочерней
+  диаграммой», потому что он не проверен. Если он вам нужен, честный
+  следующий шаг — дальше трассировать
+  `NDataPlugin.getRowSet()` / `NFunction`, либо инструментировать
+  настоящую сборку Ramus.
 
-## 10. Drawing new arrows (sectors / streams / crosspoints)
+## 10. Отрисовка новых стрелок (секторы / потоки / точки пересечения)
 
-IDEF0 arrows (data/resource flows between boxes, boundary ICOM arrows,
-tunneled arrows, etc.) are modeled through `IDEF0.Sector` /
-`IDEF0.SectorBorder` / `IDEF0.SectorPoint` / `IDEF0.SectorProperties`, plus
-a "crosspoint" concept (`crosspoint_sequence` in `sequences.xml`) and, in
-at least the 2009-era sample file, an "ordinates" concept that doesn't even
-appear as its own table (no `attribute_sector_points.xml` in that file at
-all — `IDEF0Plugin` source shows active migration/cleanup code for an even
-older "`F_QUALIFIER_CROSSPOINT`" scheme, meaning this part of the format
-visibly **changed across Ramus versions**).
+Стрелки IDEF0 (потоки данных/ресурсов между блоками, граничные
+ICOM-стрелки, туннелированные стрелки и т. д.) моделируются через
+`IDEF0.Sector` / `IDEF0.SectorBorder` / `IDEF0.SectorPoint` /
+`IDEF0.SectorProperties`, плюс концепцию «точки пересечения»
+(«crosspoint», `crosspoint_sequence` в `sequences.xml`) и, как минимум в
+образце файла эпохи 2009 года, концепцию «ординат», которая даже не
+появляется как собственная таблица (в этом файле вообще нет
+`attribute_sector_points.xml` — исходный код `IDEF0Plugin` показывает
+активный код миграции/зачистки для ещё более старой схемы
+«`F_QUALIFIER_CROSSPOINT`», а значит, эта часть формата заметно
+**менялась между версиями Ramus**).
 
-**Creating a brand-new arrow is now supported** (`Model.add_arrow()` /
-`Model.add_boundary_arrow()`), unlike in earlier revisions of this
-document. This section previously said doing so safely wasn't practical
-without a running Ramus to test against; that changed once the actual
-Ramus source (github.com/Vitaliy-Yakovchuk/ramus) became fetchable from
-this environment, so the arrow-creation code path itself could be read
-directly instead of re-guessed from the container format alone:
+**Создание совершенно новой стрелки теперь поддерживается**
+(`Model.add_arrow()` / `Model.add_boundary_arrow()`), в отличие от более
+ранних редакций этого документа. В этом разделе раньше говорилось, что
+делать это безопасно без запущенного Ramus для тестирования непрактично;
+это изменилось, как только настоящий исходный код Ramus
+(github.com/Vitaliy-Yakovchuk/ramus) стал доступен для загрузки из этого
+окружения, так что сам код создания стрелок удалось прочитать напрямую,
+а не заново угадывать по одному лишь формату контейнера:
 
-- `idef0-common/.../pb/idef/elements/SectorRefactor.java` — `createNewSector()`
-  is literally "the user just finished dragging a new arrow" in the real
-  GUI; `createMiss()`/`createBorderPoints()` are its helpers.
+- `idef0-common/.../pb/idef/elements/SectorRefactor.java` —
+  `createNewSector()` — это буквально «пользователь только что закончил
+  тянуть новую стрелку» в реальном GUI; `createMiss()`/`createBorderPoints()`
+  — его вспомогательные функции.
 - `idef0-common/.../pb/data/negine/{NSector,NSectorBorder,NCrosspoint}.java`,
   `AbstractCrosspoint.java`, `pb/Crosspoint.java`, `pb/data/SectorBorder.java`
-  — the actual data-model semantics: what a border's `BORDER_TYPE` /
-  `FUNCTION` / `FUNCTION_TYPE` / `CROSSPOINT` fields mean and how a
-  crosspoint links sector borders into a connectivity graph.
-- `idef0-core/.../idef0/IDEF0Plugin.java` — confirms `F_FUNCTION_SECTOR`
-  (declared, real files populate it) is **never actually read anywhere**
-  in the app; `Model.add_arrow()` deliberately leaves it unset rather than
-  guess at a value nothing consults.
-- `com/dsoft/utils/{DataSaver,DataLoader}.java` — the exact binary format
-  of `IDEF0.Sector`'s `VISUAL_ATTRIBUTES` blob (a small custom
-  little-endian serialization of a stroke/font/color, not Java object
-  serialization).
+  — фактическая семантика модели данных: что означают поля `BORDER_TYPE` /
+  `FUNCTION` / `FUNCTION_TYPE` / `CROSSPOINT` границы и как точка
+  пересечения связывает границы секторов в граф связности.
+- `idef0-core/.../idef0/IDEF0Plugin.java` — подтверждает, что
+  `F_FUNCTION_SECTOR` (объявлен, реальные файлы его заполняют) **нигде
+  фактически не читается** в приложении; `Model.add_arrow()` намеренно
+  оставляет его неустановленным, вместо того чтобы угадывать значение,
+  которое никто не использует.
+- `com/dsoft/utils/{DataSaver,DataLoader}.java` — точный бинарный формат
+  blob'а `VISUAL_ATTRIBUTES` у `IDEF0.Sector` (небольшая пользовательская
+  little-endian сериализация штриха/шрифта/цвета, а не сериализация
+  объектов Java).
 
-Every piece of that was then **cross-checked against the real, populated
-`attribute_sectors.xml`/`attribute_sector_borders.xml` data in all three
-bundled sample files** — not just read in isolation:
+Каждый из этих фрагментов затем был **перепроверен на реальных,
+заполненных данных `attribute_sectors.xml`/`attribute_sector_borders.xml`
+во всех трёх поставляемых образцах файлов** — а не просто прочитан
+изолированно:
 
-- A Python decoder mirroring `DataLoader`'s exact byte layout was run
-  against real sectors' `VISUAL_ATTRIBUTES` blobs and left **zero leftover
-  bytes**, confirming the format byte-for-byte (stroke: line width, cap,
-  join, dash phase, miter limit, dash array; then font name/size/style;
-  then RGB color).
-- The simplest, most common real arrow shape — a straight box-to-box
-  connection — was isolated and found to be **one `Sector` element with
-  both borders `TYPE_FUNCTION`** (`BORDER_TYPE=-1`, `FUNCTION=<box
-  element id>`, `FUNCTION_TYPE=<side>`, each with its own freshly-minted
-  `CROSSPOINT`); this is what 283 of the 288 arrows in "Enterprise
-  activity.rsf" actually look like.
-- A boundary arrow (one end on a box, one end on the diagram's own edge)
-  was isolated the same way: `BORDER_TYPE` on the boundary end reuses the
-  *same* side encoding as `FUNCTION_TYPE` (confirmed via
-  `MovingPanel.{RIGHT=0,BOTTOM=1,LEFT=2,TOP=3}`, which `SectorRefactor`
-  compares a border's `FUNCTION_TYPE` against directly).
-- Critically: **no unmodified real arrow in any of the three sample files
-  has any `attribute_sector_points.xml` row at all** — meaning Ramus
-  computes a straight/default route between two edge points at *paint
-  time*, and only a manually bent/dragged arrow ends up with stored
-  ordinates. `add_arrow()`/`add_boundary_arrow()` reproduce exactly that
-  unmodified, auto-routed state (no path data written), which is what
-  every arrow starts as.
-- `Model.new_crosspoint_id()` deliberately does **not** trust the
-  persisted `crosspoint_sequence` value the way §7 shows element/
-  qualifier/attribute ids can be trusted to self-heal: reading
-  `NDataPlugin.createCrosspoint()`, Ramus's own crosspoint sequence has no
-  `MAX(existing)`-resync loop the way `IEngineImpl.createElement()` etc.
-  do (confirmed from source) — and indeed the bundled sample file's own
-  `crosspoint_sequence` (`31`) is far below its actual highest used
-  `CROSSPOINT` value (`54927`), almost certainly stale from a
-  pre-migration counter reset. `new_crosspoint_id()` instead derives a
-  safe value from `MAX(CROSSPOINT)` already present in the loaded file's
-  own border data — tested by adding a new arrow to the real, unmodified
-  "Enterprise activity.rsf" and confirming the freshly allocated
-  crosspoint ids don't collide with any of its 260 pre-existing ones.
-- Round-tripped: added arrows survive `Model.save()` → `Model.load()`
-  with every field intact, on both a from-scratch file
-  (`template.new_model()`, which needed `F_SECTORS`/`F_STREAMS` and their
-  attribute set bootstrapped from nothing — see
-  `Model.ensure_arrow_support()`) and the real sample file (which already
-  has them, as every real Ramus file does).
+- Python-декодер, зеркалирующий точную байтовую раскладку `DataLoader`,
+  был прогнан на реальных blob'ах `VISUAL_ATTRIBUTES` секторов и не
+  оставил **ни одного лишнего байта**, подтвердив формат побайтово (штрих:
+  ширина линии, окончание, соединение, фаза штрихового пунктира, предел
+  острого угла, массив штрихов; затем имя/размер/стиль шрифта; затем цвет
+  RGB).
+- Простейшая, самая распространённая форма реальной стрелки — прямое
+  соединение блок-к-блоку — была выделена и оказалась **одним элементом
+  Sector с обеими границами `TYPE_FUNCTION`**
+  (`BORDER_TYPE=-1`, `FUNCTION=<id элемента блока>`,
+  `FUNCTION_TYPE=<сторона>`, у каждой — своя свежесозданная
+  `CROSSPOINT`); именно так выглядят 283 из 288 стрелок в «Enterprise
+  activity.rsf».
+- Граничная стрелка (один конец на блоке, другой — на собственном крае
+  диаграммы) была выделена тем же способом: `BORDER_TYPE` на граничном
+  конце переиспользует *ту же* кодировку стороны, что и `FUNCTION_TYPE`
+  (подтверждено через `MovingPanel.{RIGHT=0,BOTTOM=1,LEFT=2,TOP=3}`,
+  которую `SectorRefactor` напрямую сравнивает с `FUNCTION_TYPE`
+  границы).
+- Критически важно: **ни одна немодифицированная реальная стрелка ни в
+  одном из трёх образцов файлов не имеет вообще ни одной строки в
+  `attribute_sector_points.xml`** — то есть Ramus вычисляет
+  прямой/маршрут по умолчанию между двумя точками края *во время
+  отрисовки*, и только вручную изогнутая/перетащенная стрелка
+  заканчивается сохранёнными ординатами. `add_arrow()`/
+  `add_boundary_arrow()` воспроизводят именно это немодифицированное,
+  автоматически проложенное состояние (данные пути не пишутся), с
+  которого начинается каждая стрелка.
+- `Model.new_crosspoint_id()` намеренно **не** доверяет сохранённому
+  значению `crosspoint_sequence` так, как §7 показывает, что можно
+  доверять самовосстановлению id элемента/квалификатора/атрибута: чтение
+  `NDataPlugin.createCrosspoint()` показывает, что у собственной
+  последовательности точек пересечения Ramus нет цикла ресинхронизации
+  `MAX(existing)`, в отличие от `IEngineImpl.createElement()` и т. п.
+  (подтверждено по исходному коду) — и действительно, собственный
+  `crosspoint_sequence` поставляемого образца файла (`31`) намного ниже
+  его фактического максимального использованного значения `CROSSPOINT`
+  (`54927`), почти наверняка устарел после сброса счётчика до миграции.
+  `new_crosspoint_id()` вместо этого выводит безопасное значение из
+  `MAX(CROSSPOINT)`, уже присутствующего в данных границ загруженного
+  файла — протестировано добавлением новой стрелки к реальному,
+  немодифицированному «Enterprise activity.rsf» и подтверждением, что
+  свежевыделенные id точек пересечения не сталкиваются ни с одним из его
+  260 уже существующих.
+- Проверен цикл сохранения/загрузки: добавленные стрелки переживают
+  `Model.save()` → `Model.load()` со всеми полями нетронутыми, как на
+  файле, созданном с нуля (`template.new_model()`, которому потребовалось
+  собрать набор атрибутов `F_SECTORS`/`F_STREAMS` с нуля — см.
+  `Model.ensure_arrow_support()`), так и на реальном образце файла
+  (который уже их имеет, как и любой настоящий файл Ramus).
 
-**What's provided:**
+**Что предоставляется:**
 
 - `Model.add_arrow(from_element_id, from_side, to_element_id, to_side, *,
-  name="", tunnel=False)` — a straight arrow directly between two function
-  boxes on the same diagram. `from_side`/`to_side` are `ArrowSide` values
-  (`LEFT`=Input, `TOP`=Control, `RIGHT`=Output, `BOTTOM`=Mechanism, or the
-  `INPUT`/`CONTROL`/`OUTPUT`/`MECHANISM` aliases). Returns the new
-  Stream element id (the arrow's own identity/label).
+  name="", tunnel=False)` — прямая стрелка напрямую между двумя
+  функциональными блоками на одной диаграмме. `from_side`/`to_side` —
+  значения `ArrowSide` (`LEFT`=Input, `TOP`=Control, `RIGHT`=Output,
+  `BOTTOM`=Mechanism, либо псевдонимы
+  `INPUT`/`CONTROL`/`OUTPUT`/`MECHANISM`). Возвращает id нового элемента
+  Stream (собственная идентичность/подпись стрелки).
 - `Model.add_boundary_arrow(element_id, box_side, page_side, *,
-  direction="in", name="", tunnel=False)` — an ICOM arrow between a
-  function box and the diagram page's own edge (entering or leaving the
-  diagram from outside).
-- `Model.ensure_arrow_support()` — bootstraps `F_SECTORS`/`F_STREAMS` and
-  their attribute set on a file that doesn't have them yet (called
-  automatically by the two methods above).
-- `encode_sector_visual_attributes(...)` — build a custom
-  `VISUAL_ATTRIBUTES` blob (line width, cap/join, dash, font, color) if
-  you don't want the verified real-Ramus-default look
-  `add_arrow()`/`add_boundary_arrow()` use otherwise.
+  direction="in", name="", tunnel=False)` — стрелка ICOM между
+  функциональным блоком и краем самой страницы диаграммы (входящая в
+  диаграмму или выходящая из неё извне).
+- `Model.ensure_arrow_support()` — собирает `F_SECTORS`/`F_STREAMS` и их
+  набор атрибутов на файле, у которого их ещё нет (вызывается
+  автоматически двумя методами выше).
+- `encode_sector_visual_attributes(...)` — построить пользовательский
+  blob `VISUAL_ATTRIBUTES` (ширина линии, окончание/соединение, штрих,
+  шрифт, цвет), если вам не нужен проверенный вид «по умолчанию как в
+  настоящем Ramus», который иначе используют `add_arrow()`/
+  `add_boundary_arrow()`.
 
-**What's still *not* provided, and why:**
+**Что всё ещё *не* предоставляется, и почему:**
 
-- **Multi-segment / bent arrows.** Real files do chain several `Sector`
-  elements into one arrow via a shared `CROSSPOINT` at the join (verified
-  against a real 4-sector stream), so the mechanism is understood, but
-  it wasn't built into a public helper — the routing choices a bend
-  implies (which crosspoint is `TYPE_ONE_IN` vs `TYPE_ONE_OUT`, i.e. which
-  end fans out) go beyond what's needed for the common case and weren't
-  exercised against enough real multi-segment examples to be as confident
-  in as the single-segment shapes above. `Model.table(...)` can still get
-  you there by hand, following the same borders/crosspoint fields.
-- **Linking a function box to its own child decomposition diagram** —
-  unrelated to arrows, still unimplemented; see §9.
-- Still unconfirmed by an actual Ramus GUI render (see §14) — everything
-  above is "matches real saved data and the code that produces it"
-  confidence, not "watched Ramus draw it" confidence.
+- **Многосегментные / изогнутые стрелки.** Реальные файлы действительно
+  соединяют цепочкой несколько элементов `Sector` в одну стрелку через
+  общую `CROSSPOINT` в месте соединения (проверено на реальном потоке из
+  4 секторов), так что механизм понятен, но он не был встроен в
+  публичный хелпер — решения по маршрутизации, которые подразумевает
+  изгиб (какая точка пересечения — `TYPE_ONE_IN`, а какая —
+  `TYPE_ONE_OUT`, то есть какой конец «веерится»), выходят за рамки
+  нужного для типичного случая и не были опробованы на достаточном
+  количестве реальных многосегментных примеров, чтобы быть настолько же
+  уверенными, как в односегментных формах выше. `Model.table(...)`
+  по-прежнему может довести вас туда вручную, следуя тем же полям
+  границ/точек пересечения.
+- **Связывание функционального блока с его собственной дочерней
+  диаграммой декомпозиции** — не связано со стрелками, всё ещё не
+  реализовано; см. §9.
+- Всё ещё не подтверждено фактической отрисовкой в GUI Ramus (см. §14)
+  — всё вышеописанное имеет уверенность уровня «совпадает с реальными
+  сохранёнными данными и с кодом, который их производит», а не
+  «наблюдал, как Ramus это рисует».
 
-Columns are fully documented in §6 (`attribute_sectors.xml`,
-`attribute_sector_borders.xml`, `attribute_sector_points.xml`), and the
-generic table API (`Model.table(path)`) can read and edit any of them like
-any other table for anything the helpers above don't cover — e.g. renaming
-an existing arrow's `ALTERNATIVE_TEXT`, or hand-building a multi-segment
-route.
+Столбцы полностью документированы в §6
+(`attribute_sectors.xml`, `attribute_sector_borders.xml`,
+`attribute_sector_points.xml`), и обобщённый API таблиц
+(`Model.table(path)`) может читать и редактировать любую из них так же,
+как любую другую таблицу, для всего, что не покрыто хелперами выше —
+например, переименование `ALTERNATIVE_TEXT` существующей стрелки, или
+ручное построение многосегментного маршрута.
 
-## 11. File-attribute / HTML-text streams
+## 11. Потоки файловых атрибутов / HTML-текста
 
-`Core.File` and `Core.HTMLText`-typed attributes (e.g. the `Description`
-field on a function box) are **not** stored as EAV rows. From
+Атрибуты типа `Core.File` и `Core.HTMLText` (например, поле `Description`
+у функционального блока) хранятся **не** как строки EAV. Из
 `AbstractFilePlugin.java`:
 
 ```java
@@ -667,119 +731,129 @@ public String getFilePath(long elementId, long attributeId) {
 // HTMLTextPlugin.getFileName() -> "index.html"
 ```
 
-i.e. the raw bytes (HTML for `Description`, or the original filename's
-bytes for a generic file attachment) are written as their own zip entry at
-that literal path (leading `/` stripped when actually written to the zip,
-per `FileIEngineImpl.createZipEntry()`), and a matching row is added to
-`data/streams.xml` (`STREAM_ID` = the same path, **with** the leading
-`/`). The real sample files confirm this general stream-storage mechanism
-(e.g. `/elements/767/17/report.0.xml` entries exist for a *different*
-feature, the report-template editor, using the identical
-`/elements/<id>/<n>/...` convention) but happen not to have any function
-box with a non-empty `Description`, so this specific path was not observed
-populated in a real file — it is derived directly from `AbstractFilePlugin`
-/ `HTMLTextPlugin` source, not confirmed byte-for-byte against a real
-`Description` value. `Model.set_value(element_id, description_attr_id, html_bytes)`
-implements exactly this (see `Model._stream_path` / `_set_stream` in
-`rsf_model.py`), and was tested mechanically (write + reload gets the
-bytes back, streams-table bookkeeping stays consistent) but **not**
-against a real Ramus GUI render.
+то есть сырые байты (HTML для `Description`, либо байты оригинального
+имени файла для обычного файлового вложения) записываются как
+собственная запись zip по этому буквальному пути (ведущий `/` отбрасывается
+при фактической записи в zip, согласно
+`FileIEngineImpl.createZipEntry()`), и в `data/streams.xml` добавляется
+соответствующая строка (`STREAM_ID` = тот же путь, **с** ведущим `/`).
+Реальные образцы файлов подтверждают этот общий механизм хранения
+потоков (например, записи `/elements/767/17/report.0.xml` существуют для
+*другой* функции — редактора шаблонов отчётов, использующего ту же самую
+конвенцию `/elements/<id>/<n>/...`), но так получилось, что среди них нет
+ни одного функционального блока с непустым `Description`, так что этот
+конкретный путь не наблюдался заполненным в реальном файле — он выведен
+напрямую из исходного кода `AbstractFilePlugin` / `HTMLTextPlugin`, а не
+подтверждён побайтово на реальном значении `Description`.
+`Model.set_value(element_id, description_attr_id, html_bytes)` реализует
+именно это (см. `Model._stream_path` / `_set_stream` в `rsf_model.py`) и
+было протестировано механически (запись + перезагрузка возвращает те же
+байты, учёт в таблице потоков остаётся согласованным), но **не** на
+реальной отрисовке в GUI Ramus.
 
-## 12. Old-format compatibility (branches/versioning)
+## 12. Совместимость со старым форматом (ветки/версионирование)
 
-The 2009-era sample files have **no** `branches`, `attributes_history`,
-`qualifiers_history`, `*_data_metadata` tables at all (those were added in
-`update4.sql`, part of a later "model branching" feature). Loading code
-tolerates every one of these being absent (`loadTable` skips missing
-entries silently), and `created_branch_id`/`removed_branch_id` columns
-that do exist on `elements`/`qualifiers`/`attributes`/`streams` default
-sensibly when absent from a row's `<fields>` (`XMLToTable`'s SAX handler
-pre-fills `0` / `Integer.MAX_VALUE` for any `*_branch_id` column not
-explicitly present in a row). **Practical consequence: you can emit the
-simpler pre-2.0 table shapes (3–4 columns, no branch bookkeeping at all)
-and current Ramus (2.0.x) will still load the file correctly**, getting
-implicit trunk/branch-0 semantics for free. This is what the toolkit does
-by default (it never adds branch-related tables/columns unless they were
-already present in the file you loaded).
+В образцах файлов эпохи 2009 года **нет вовсе** таблиц `branches`,
+`attributes_history`, `qualifiers_history`, `*_data_metadata` (они были
+добавлены в `update4.sql`, часть более поздней функции «ветвления
+модели»). Код загрузки терпимо относится к отсутствию любой из них
+(`loadTable` молча пропускает отсутствующие записи), а столбцы
+`created_branch_id`/`removed_branch_id`, которые всё-таки существуют в
+`elements`/`qualifiers`/`attributes`/`streams`, разумно принимают
+значения по умолчанию при отсутствии в `<fields>` строки (SAX-обработчик
+`XMLToTable` заранее заполняет `0` / `Integer.MAX_VALUE` для любого
+столбца `*_branch_id`, явно не присутствующего в строке).
+**Практическое следствие: вы можете выдавать более простые формы таблиц
+до версии 2.0 (3–4 столбца, вообще без учёта веток), и современный
+Ramus (2.0.x) всё равно корректно загрузит файл**, получая неявную
+семантику ствола/ветки-0 бесплатно. Именно так набор инструментов
+поступает по умолчанию (он никогда не добавляет таблицы/столбцы,
+связанные с ветками, если только они уже не присутствовали в загруженном
+вами файле).
 
-## 13. The toolkit
+## 13. Набор инструментов
 
-Three files, no third-party dependencies (pure Python 3, stdlib only:
-`zipfile`, `xml.etree.ElementTree`):
+Три файла, без сторонних зависимостей (чистый Python 3, только стандартная
+библиотека: `zipfile`, `xml.etree.ElementTree`):
 
-### `rsf_core.py` — container layer
+### `rsf_core.py` — слой контейнера
 
-- `Table` — one parsed `data/**/*.xml` file: `.fields` (name/type/id),
-  `.rows` (list of `{COLUMN_NAME: value}` dicts, values already decoded to
-  native Python types per §4), plus `.find_rows(**eq)` and `.max_int(col)`
-  helpers. `.to_xml_bytes()` re-serializes it, matching the real format
-  exactly (verified, §14).
-- `RsfArchive` — the whole zip: `.tables` (dict path→`Table`),
-  `.properties` (dict path→dict, for the two Properties-XML files),
-  `.raw` (dict path→bytes, for everything else — GUI state, attachments,
-  print settings — preserved byte-for-byte on save unless you touch it).
-  `.load(path)` / `.save(path)`.
-- `bytes_to_rsf_hex` / `rsf_hex_to_bytes` — the byte↔hex codec from §4.
-- `parse_rsf_date` / `format_rsf_date` — the timestamp format from §4.
-- This layer is **fully generic** — it doesn't know or care what IDEF0 is.
-  It can load, inspect, and losslessly re-save *any* `.rsf` file,
-  including future ones with tables this document doesn't mention.
+- `Table` — один разобранный файл `data/**/*.xml`: `.fields` (имя/тип/id),
+  `.rows` (список словарей `{ИМЯ_СТОЛБЦА: значение}`, значения уже
+  декодированы в нативные типы Python по §4), плюс хелперы `.find_rows(**eq)`
+  и `.max_int(col)`. `.to_xml_bytes()` пересериализует её, в точности
+  совпадая с реальным форматом (проверено, §14).
+- `RsfArchive` — весь архив zip: `.tables` (словарь путь→`Table`),
+  `.properties` (словарь путь→словарь, для двух файлов Properties-XML),
+  `.raw` (словарь путь→байты, для всего остального — состояние GUI,
+  вложения, настройки печати — сохраняется побайтово при сохранении, если
+  вы это не трогаете). `.load(path)` / `.save(path)`.
+- `bytes_to_rsf_hex` / `rsf_hex_to_bytes` — кодек байты↔hex из §4.
+- `parse_rsf_date` / `format_rsf_date` — формат временной метки из §4.
+- Этот слой **полностью обобщённый** — он не знает и не заботится о том,
+  что такое IDEF0. Он может загружать, изучать и без потерь пересохранять
+  *любой* файл `.rsf`, включая будущие, с таблицами, о которых этот
+  документ не упоминает.
 
-### `rsf_model.py` — semantic (EAV) layer
+### `rsf_model.py` — семантический (EAV) слой
 
-Built on top of `rsf_core`. Key pieces:
+Построен поверх `rsf_core`. Ключевые части:
 
-- `TYPE_MAP` — the `(plugin, type) -> (table path, mode, columns)` table
-  from §5/§6, `mode` ∈ `{scalar, struct, list, stream}`.
-- `Model(archive)` / `Model.load(path)` — indexes qualifiers / elements /
-  attributes / qualifier-attribute links on construction (`.refresh()` to
-  re-index after raw edits via `.table(...)`).
-- Generic value access: `get_value(element_id, attribute_id)` /
+- `TYPE_MAP` — таблица `(plugin, type) -> (путь таблицы, режим, столбцы)`
+  из §5/§6, `mode` ∈ `{scalar, struct, list, stream}`.
+- `Model(archive)` / `Model.load(path)` — индексирует квалификаторы /
+  элементы / атрибуты / связи квалификатор-атрибут при создании
+  (`.refresh()` — переиндексировать после сырых правок через `.table(...)`).
+- Обобщённый доступ к значениям: `get_value(element_id, attribute_id)` /
   `set_value(element_id, attribute_id, value)` / `delete_value(...)` —
-  dispatches on the attribute's declared type via `TYPE_MAP`, so this
-  works for *any* mapped type, not just the IDEF0 ones.
-- Lookups: `find_qualifier(name)`, `find_attribute(qualifier_id, name)`,
+  диспетчеризует по объявленному типу атрибута через `TYPE_MAP`, так что
+  это работает для *любого* сопоставленного типа, не только IDEF0.
+- Поиск: `find_qualifier(name)`, `find_attribute(qualifier_id, name)`,
   `element_qualifier(element_id)`, `attribute_type(attribute_id)`.
-- Structure edits: `add_element(qualifier_id, name)`,
+- Структурные правки: `add_element(qualifier_id, name)`,
   `set_element_name`, `delete_element`,
   `clone_qualifier_as_container(source_qualifier_id, new_name)` (§9),
   `register_model_root(...)` (§9), `new_element_id()` /
-  `new_qualifier_id()` / `new_attribute_id()` (§7-safe ID allocation).
-- IDEF0 function-box convenience wrappers (§8): `set_name`, `set_bounds`,
-  `set_background`, `set_foreground`, `set_font`, `set_status`, and the
-  one-shot `add_function_box(qualifier_id, name, x, y, width, height, ...)`.
-- `argb(r,g,b,a=255)` / `unpack_argb(value)` — color codec from §8.
-- Arrows (§10): `add_arrow(from_element_id, from_side, to_element_id,
-  to_side, name="", tunnel=False)` (box-to-box), `add_boundary_arrow(
+  `new_qualifier_id()` / `new_attribute_id()` (безопасное выделение ID
+  по §7).
+- Вспомогательные функции для функционального блока IDEF0 (§8):
+  `set_name`, `set_bounds`, `set_background`, `set_foreground`,
+  `set_font`, `set_status`, и разовый
+  `add_function_box(qualifier_id, name, x, y, width, height, ...)`.
+- `argb(r,g,b,a=255)` / `unpack_argb(value)` — кодек цвета из §8.
+- Стрелки (§10): `add_arrow(from_element_id, from_side, to_element_id,
+  to_side, name="", tunnel=False)` (блок-к-блоку), `add_boundary_arrow(
   element_id, box_side, page_side, direction="in", name="", tunnel=False)`
-  (box-to-page-edge), `ensure_arrow_support()` (bootstraps `F_SECTORS`/
-  `F_STREAMS` if the file doesn't have them), `ArrowSide`/`TunnelType`
-  constants, `encode_sector_visual_attributes(...)` for custom arrow
-  styling.
-- `dump_model(model, include_system_qualifiers=False)` — a full,
-  JSON-serialisable snapshot of the whole model (every qualifier → every
-  element → every resolved attribute), meant for feeding to a human or an
-  AI, not as a round-trip edit format.
-- `apply_json_dump(model, data)` — the inverse: patches `dump_model()`-
-  shaped JSON (e.g. hand-edited/redacted) back onto the model, matching
-  qualifiers/elements by id; see `LLM_REDACTION_GUIDE.md` for the exact
-  rules an editor (human or AI) should follow.
-- `Model.table(path)` — escape hatch to any raw table for anything not
-  covered by the semantic helpers (multi-segment arrows, etc., per §10).
+  (блок-к-краю-страницы), `ensure_arrow_support()` (собирает
+  `F_SECTORS`/`F_STREAMS`, если в файле их нет), константы
+  `ArrowSide`/`TunnelType`, `encode_sector_visual_attributes(...)` для
+  пользовательского оформления стрелок.
+- `dump_model(model, include_system_qualifiers=False)` — полный,
+  сериализуемый в JSON снимок всей модели (каждый квалификатор → каждый
+  элемент → каждый разрешённый атрибут), предназначенный для передачи
+  человеку или ИИ, а не как формат для цикла редактирования с сохранением.
+- `apply_json_dump(model, data)` — обратная операция: патчит JSON в
+  форме `dump_model()` (например, отредактированный/отцензурированный
+  вручную) обратно в модель, сопоставляя квалификаторы/элементы по id;
+  см. `LLM_REDACTION_GUIDE.md` для точных правил, которым должен следовать
+  редактор (человек или ИИ).
+- `Model.table(path)` — аварийный люк к любой сырой таблице для всего, что
+  не покрыто семантическими хелперами (многосегментные стрелки и т. д.,
+  по §10).
 
-### `rsf_cli.py` — command-line front-end
+### `rsf_cli.py` — интерфейс командной строки
 
 ```
-python3 rsf_cli.py dump FILE.rsf [--all] [--pretty]      # whole model as JSON
-python3 rsf_cli.py qualifiers FILE.rsf                    # list qualifiers
-python3 rsf_cli.py elements FILE.rsf QUALIFIER_ID          # list elements under one
-python3 rsf_cli.py show FILE.rsf ELEMENT_ID                 # one element's attributes
-python3 rsf_cli.py tables FILE.rsf                          # every raw table + row count
-python3 rsf_cli.py table FILE.rsf TABLE_PATH                # dump one raw table
+python3 rsf_cli.py dump FILE.rsf [--all] [--pretty]      # вся модель как JSON
+python3 rsf_cli.py qualifiers FILE.rsf                    # список квалификаторов
+python3 rsf_cli.py elements FILE.rsf QUALIFIER_ID          # список элементов одного квалификатора
+python3 rsf_cli.py show FILE.rsf ELEMENT_ID                 # атрибуты одного элемента
+python3 rsf_cli.py tables FILE.rsf                          # каждая сырая таблица + число строк
+python3 rsf_cli.py table FILE.rsf TABLE_PATH                # дамп одной сырой таблицы
 python3 rsf_cli.py rename FILE.rsf ELEMENT_ID NEW_NAME OUT.rsf
 ```
 
-### Example: read an existing file
+### Пример: чтение существующего файла
 
 ```python
 from rsf_model import Model, dump_model
@@ -791,34 +865,34 @@ print(m.element_attributes(79))             # -> {'Name': ..., 'F_BOUNDS': {...}
 json.dump(dump_model(m), open("dump.json", "w"), ensure_ascii=False, indent=2)
 ```
 
-### Example: edit an existing file
+### Пример: редактирование существующего файла
 
 ```python
 from rsf_model import Model
 
 m = Model.load("MyModel.rsf")
-m.set_name(80, "Renamed box")
+m.set_name(80, "Переименованный блок")
 m.set_bounds(80, x=100, y=100, width=140, height=90)
 m.save("MyModel_edited.rsf")
 ```
 
-### Example: generate a brand-new diagram from a template
+### Пример: создание совершенно новой диаграммы из шаблона
 
 ```python
 from rsf_model import Model
 
-# any existing .rsf works as a template -- it just needs one qualifier
-# that already has the full IDEF0 function-box attribute set (any real
-# diagram page qualifies).
+# в качестве шаблона подойдёт любой существующий .rsf -- нужен лишь один
+# квалификатор, у которого уже есть полный набор атрибутов функционального
+# блока IDEF0 (подходит любая настоящая страница диаграммы).
 m = Model.load("template.rsf")
 root = m.find_qualifier("Enterprise activity")
 
-new_qid = m.clone_qualifier_as_container(root, "My New Process")
-m.add_function_box(new_qid, "Receive Order",  x=40,  y=40, width=140, height=80)
-m.add_function_box(new_qid, "Process Order",  x=240, y=40, width=140, height=80)
-m.add_function_box(new_qid, "Ship Order",     x=440, y=40, width=140, height=80)
+new_qid = m.clone_qualifier_as_container(root, "Мой новый процесс")
+m.add_function_box(new_qid, "Принять заказ",  x=40,  y=40, width=140, height=80)
+m.add_function_box(new_qid, "Обработать заказ",  x=240, y=40, width=140, height=80)
+m.add_function_box(new_qid, "Отгрузить заказ",     x=440, y=40, width=140, height=80)
 
-# optional: register it as its own top-level model in the navigator
+# опционально: зарегистрировать её как собственную модель верхнего уровня в навигаторе
 bf = m.find_base_functions_qualifier()
 root_elem = m.add_element(bf, name="")
 m.register_model_root(root_elem, new_qid)
@@ -826,7 +900,7 @@ m.register_model_root(root_elem, new_qid)
 m.save("new_diagram.rsf")
 ```
 
-### Example: connect two boxes with a new arrow
+### Пример: соединить два блока новой стрелкой
 
 ```python
 from rsf_model import Model, ArrowSide
@@ -836,145 +910,154 @@ root = m.find_qualifier("Enterprise activity")
 boxes = {m.elements[eid]["ELEMENT_NAME"]: eid
          for eid in m.elements_by_qualifier[root]}
 
-# a straight arrow from "Receive Order"'s Output side to "Process Order"'s Input side
-m.add_arrow(boxes["Receive Order"], ArrowSide.OUTPUT,
-            boxes["Process Order"], ArrowSide.INPUT,
-            name="Order")
+# прямая стрелка со стороны Output блока "Принять заказ" на сторону Input блока "Обработать заказ"
+m.add_arrow(boxes["Принять заказ"], ArrowSide.OUTPUT,
+            boxes["Обработать заказ"], ArrowSide.INPUT,
+            name="Заказ")
 
-# a Control arrow entering "Receive Order" from the top of the page
-m.add_boundary_arrow(boxes["Receive Order"], ArrowSide.CONTROL, ArrowSide.TOP,
-                      direction="in", name="Company policy")
+# стрелка Control, входящая в "Принять заказ" сверху страницы
+m.add_boundary_arrow(boxes["Принять заказ"], ArrowSide.CONTROL, ArrowSide.TOP,
+                      direction="in", name="Политика компании")
 
 m.save("MyModel_with_arrows.rsf")
 ```
 
-## 14. Verification
+## 14. Проверка
 
-No JVM/Gradle build of Ramus itself was available in the environment this
-was built in (the sandbox's network allowlist doesn't include Maven
-Central, so `./gradlew runLocal` cannot fetch dependencies) — so nothing
-here was confirmed by opening the output in the actual Ramus GUI. What
-*was* done instead, which is the strongest verification practical without
-that:
+В окружении, в котором это разрабатывалось, не было доступно сборки
+Ramus на JVM/Gradle (белый список сети песочницы не включает Maven
+Central, поэтому `./gradlew runLocal` не может скачать зависимости) —
+так что ничего здесь не было подтверждено открытием результата в
+настоящем GUI Ramus. Вот что *было* сделано вместо этого, что является
+самой сильной практически возможной проверкой без этого:
 
-1. **Static-analysis-only claims were held to a higher bar**: every table
-   schema and encoding rule in this document was cross-checked against
-   the **actual bytes of three real `.rsf` files** shipped in the Ramus
-   repository itself (not synthetic examples) — `dest/doc/en/Enterprise
-   activity.rsf`, `dest/doc/ru/Model example.rsf`,
-   `dest/doc/ru/Пример модели.rsf`.
-2. **Lossless round-trip test**: both English and Russian sample files
-   were loaded with `RsfArchive.load()`, immediately saved back out with
-   no edits, and every table's rows (and every raw/property entry) were
-   compared field-by-field against the original — **zero mismatches**,
-   including full-width Cyrillic text and empty-vs-null field
-   distinctions.
-3. **Edit round-trip test**: loaded the English sample, renamed an
-   existing function box, added a brand-new one with full visual
-   attributes (bounds/colors/font/status/type) under the *existing* root
-   diagram qualifier, saved, reloaded, and confirmed every written value
-   matches what was set. Diffing the saved file against the original
-   showed **only the tables actually touched had changed** — all 25
-   non-table entries (GUI state, streams, attachments) were preserved
-   byte-for-byte.
-4. **New-diagram-from-template test**: cloned the root qualifier's
-   attribute set into a brand-new qualifier, added three function boxes to
-   it, saved, reloaded, and confirmed the new qualifier + elements +
-   attributes all read back correctly and the zip passes
+1. **Утверждения, основанные только на статическом анализе, проверялись
+   по более высокой планке**: каждая схема таблицы и правило кодирования
+   в этом документе были перепроверены на **фактических байтах трёх
+   реальных файлов `.rsf`**, поставляемых в самом репозитории Ramus (не
+   синтетических примерах) — `dest/doc/en/Enterprise activity.rsf`,
+   `dest/doc/ru/Model example.rsf`, `dest/doc/ru/Пример модели.rsf`.
+2. **Тест бесшовного цикла сохранения/загрузки**: и английский, и русский
+   образцы файлов были загружены через `RsfArchive.load()`, немедленно
+   сохранены обратно без правок, и строки каждой таблицы (и каждая
+   сырая/property-запись) были сравнены поле за полем с оригиналом —
+   **нулевые расхождения**, включая текст на кириллице во всю ширину и
+   различие «пусто против null» в полях.
+3. **Тест цикла с редактированием**: загружен английский образец,
+   переименован существующий функциональный блок, добавлен совершенно
+   новый со всеми визуальными атрибутами (границы/цвета/шрифт/
+   статус/тип) под *существующим* корневым квалификатором диаграммы,
+   сохранено, перезагружено, и подтверждено, что каждое записанное
+   значение совпадает с установленным. Сравнение сохранённого файла с
+   оригиналом показало, что **изменились только фактически затронутые
+   таблицы** — все 25 записей, не являющихся таблицами (состояние GUI,
+   потоки, вложения), были сохранены побайтово.
+4. **Тест создания новой диаграммы из шаблона**: набор атрибутов
+   корневого квалификатора клонирован в совершенно новый квалификатор, к
+   нему добавлены три функциональных блока, сохранено, перезагружено, и
+   подтверждено, что новый квалификатор + элементы + атрибуты
+   считываются обратно корректно, а архив проходит
    `zipfile.ZipFile.testzip()`.
-5. **Model-root registration test**: added a new `F_BASE_FUNCTIONS`
-   element and pointed it at a freshly cloned qualifier via
-   `register_model_root`, saved, reloaded, confirmed the link.
-6. **Color codec test**: `argb(0,255,0) == -16711936` and
-   `argb(0,0,0) == -16777216` — matching the literal integer values seen
-   on every function box's `F_BACKGROUND`/`F_FOREGROUND` in the real
-   sample files.
-7. **Arrow creation** (§10, added later once the real Ramus source became
-   fetchable from this environment): the arrow-creation Java source was
-   read directly rather than inferred, and every claim built from it was
-   cross-checked against real data the same way as everything else here —
-   a `VISUAL_ATTRIBUTES` blob decoder mirroring the real binary format
-   read real sectors' blobs with zero leftover bytes; the simple box-to-
-   box and box-to-boundary arrow shapes this module produces were
-   isolated from and matched against hundreds of real arrows in
-   "Enterprise activity.rsf"; a new arrow was added to that *unmodified
-   real file* (not just a synthetic one) and its freshly allocated
-   crosspoint ids were confirmed not to collide with any of the file's
-   260 pre-existing ones; and the result round-tripped through
-   save/reload with every field intact, both on that real file and on a
-   from-scratch one via `template.new_model()` (whose `F_SECTORS`/
-   `F_STREAMS` bootstrapping this exercised too, via
-   `ensure_arrow_support()`).
+5. **Тест регистрации корня модели**: добавлен новый элемент
+   `F_BASE_FUNCTIONS` и указан на свежеклонированный квалификатор через
+   `register_model_root`, сохранено, перезагружено, связь подтверждена.
+6. **Тест кодека цвета**: `argb(0,255,0) == -16711936` и
+   `argb(0,0,0) == -16777216` — совпадает с буквальными целыми
+   значениями, встреченными в `F_BACKGROUND`/`F_FOREGROUND` каждого
+   функционального блока в реальных образцах файлов.
+7. **Создание стрелок** (§10, добавлено позже, как только настоящий
+   исходный код Ramus стал доступен для загрузки из этого окружения):
+   исходный код Java для создания стрелок был прочитан напрямую, а не
+   выведен, и каждое построенное на нём утверждение было перепроверено
+   на реальных данных так же, как и всё остальное здесь — декодер blob'а
+   `VISUAL_ATTRIBUTES`, зеркалирующий реальный бинарный формат, прочитал
+   blob'ы реальных секторов без единого лишнего байта; простые формы
+   стрелок блок-к-блоку и блок-к-границе, которые производит этот модуль,
+   были выделены из и сопоставлены с сотнями реальных стрелок в
+   «Enterprise activity.rsf»; новая стрелка была добавлена в этот
+   *немодифицированный реальный файл* (а не только в синтетический), и
+   подтверждено, что её свежевыделенные id точек пересечения не
+   сталкиваются ни с одним из 260 уже существующих в файле; и результат
+   прошёл цикл сохранения/перезагрузки со всеми полями нетронутыми, как
+   на этом реальном файле, так и на созданном с нуля через
+   `template.new_model()` (что заодно проверило сборку
+   `F_SECTORS`/`F_STREAMS` через `ensure_arrow_support()`).
 
-What was **not** verified (clearly flagged inline above too): per-box
-decomposition linking (§9), multi-segment/bent arrows and the exact byte
-layout of a populated `Core.HTMLText` stream (§11) — these are read/write-
-capable at the raw-table level but their higher-level "is this what
-Ramus's GUI expects" correctness is unconfirmed. And more broadly: nothing
-in this document, arrows included, has been confirmed by opening the
-result in the actual Ramus GUI (no JVM/Gradle toolchain was available to
-build and run it) — "matches real saved data and the source that produces
-it" is the ceiling of what was verified here.
+Что **не** было проверено (что также явно отмечено по тексту выше):
+связывание декомпозиции на уровне блока (§9), многосегментные/изогнутые
+стрелки и точная байтовая раскладка заполненного потока `Core.HTMLText`
+(§11) — они читаемы/редактируемы на уровне сырой таблицы, но их более
+высокоуровневая корректность «это то, что ожидает GUI Ramus» не
+подтверждена. И в более широком смысле: ничто в этом документе, включая
+стрелки, не было подтверждено открытием результата в настоящем GUI Ramus
+(не было доступно инструментов JVM/Gradle, чтобы собрать и запустить его)
+— «совпадает с реально сохранёнными данными и исходным кодом, который их
+производит» — это потолок того, что здесь было проверено.
 
-## 15. Source-file cross-reference
+## 15. Перекрёстные ссылки на исходные файлы
 
-For anyone who wants to verify or extend this against the source directly
-(all paths relative to the repo root):
+Для тех, кто хочет проверить или расширить это, сверяясь напрямую с
+исходным кодом (все пути — относительно корня репозитория):
 
-| topic | file |
+| тема | файл |
 |---|---|
-| save/load orchestration, zip layout | `core/src/main/java/com/ramussoft/core/impl/FileIEngineImpl.java` |
-| table → XML export | `core/src/main/java/com/ramussoft/core/impl/TableToXML.java` |
-| XML → table import | `core/src/main/java/com/ramussoft/core/impl/XMLToTable.java` |
-| core SQL schema | `database-storage/src/main/resources/com/ramussoft/jdbc/database.sql` + `update1..5.sql` |
-| ID allocation (`createElement`/`createAttribute`/`createQualifier`) | `core/src/main/java/com/ramussoft/core/impl/IEngineImpl.java` |
-| persistent-object annotations (`@Table`, `@Text`, `@Long`, ...) | `common/src/main/java/com/ramussoft/common/persistent/*.java` |
-| simple Core attribute types | `core-simple-attributes/src/main/java/com/ramussoft/core/attribute/simple/*.java` |
-| file/HTML-text stream storage | `core-simple-attributes/.../simple/AbstractFilePlugin.java`, `HTMLTextPlugin.java` |
-| IDEF0 system attribute set (`F_*` constants, `checkIDEF0Attributes`) | `idef0-core/src/main/java/com/ramussoft/idef0/IDEF0Plugin.java` |
-| IDEF0 attribute persistents (Rectangle/Color/Font/Status/...) | `idef0-core/src/main/java/com/ramussoft/idef0/attribute/*.java` |
-| GUI-side decomposition/row-set logic (unfinished tracing, §9) | `idef0-common/src/main/java/com/ramussoft/pb/data/negine/NDataPlugin.java`, `NFunction.java` |
-| arrow creation entry point ("user just finished drawing"), §10 | `idef0-common/src/main/java/com/ramussoft/pb/idef/elements/SectorRefactor.java` |
-| sector/border/crosspoint data model, §10 | `idef0-common/src/main/java/com/ramussoft/pb/data/negine/{NSector,NSectorBorder,NCrosspoint}.java`, `pb/data/AbstractCrosspoint.java`, `pb/data/SectorBorder.java`, `pb/Crosspoint.java`, `pb/Sector.java` |
-| box/page-edge side constants (`ArrowSide`), §10 | `idef0-common/src/main/java/com/ramussoft/pb/idef/visual/MovingPanel.java` |
-| `VISUAL_ATTRIBUTES` blob binary format, §10 | `idef0-common/src/main/java/com/dsoft/utils/{DataSaver,DataLoader}.java` |
-| crosspoint id sequence (no resync-from-data, unlike element/etc ids), §7 & §10 | `idef0-core/src/main/java/com/ramussoft/idef0/IDEF0Plugin.java` (`getNextCrosspointId`), `idef0-common/.../negine/NDataPlugin.java` (`createCrosspoint`) |
-| file-extension / launcher plumbing | `local-client/src/main/java/com/ramussoft/local/FilePlugin.java` |
-| real sample files used for verification | `dest/doc/en/Enterprise activity.rsf`, `dest/doc/ru/Model example.rsf`, `dest/doc/ru/Пример модели.rsf` |
+| оркестрация сохранения/загрузки, структура zip | `core/src/main/java/com/ramussoft/core/impl/FileIEngineImpl.java` |
+| экспорт таблицы → XML | `core/src/main/java/com/ramussoft/core/impl/TableToXML.java` |
+| импорт XML → таблица | `core/src/main/java/com/ramussoft/core/impl/XMLToTable.java` |
+| основная SQL-схема | `database-storage/src/main/resources/com/ramussoft/jdbc/database.sql` + `update1..5.sql` |
+| выделение ID (`createElement`/`createAttribute`/`createQualifier`) | `core/src/main/java/com/ramussoft/core/impl/IEngineImpl.java` |
+| аннотации persistent-объектов (`@Table`, `@Text`, `@Long`, ...) | `common/src/main/java/com/ramussoft/common/persistent/*.java` |
+| простые типы атрибутов Core | `core-simple-attributes/src/main/java/com/ramussoft/core/attribute/simple/*.java` |
+| хранение потоков файл/HTML-текст | `core-simple-attributes/.../simple/AbstractFilePlugin.java`, `HTMLTextPlugin.java` |
+| системный набор атрибутов IDEF0 (константы `F_*`, `checkIDEF0Attributes`) | `idef0-core/src/main/java/com/ramussoft/idef0/IDEF0Plugin.java` |
+| persistent-классы атрибутов IDEF0 (Rectangle/Color/Font/Status/...) | `idef0-core/src/main/java/com/ramussoft/idef0/attribute/*.java` |
+| логика декомпозиции/row-set на стороне GUI (трассировка не завершена, §9) | `idef0-common/src/main/java/com/ramussoft/pb/data/negine/NDataPlugin.java`, `NFunction.java` |
+| точка входа создания стрелки («пользователь только что закончил рисовать»), §10 | `idef0-common/src/main/java/com/ramussoft/pb/idef/elements/SectorRefactor.java` |
+| модель данных сектор/граница/точка пересечения, §10 | `idef0-common/src/main/java/com/ramussoft/pb/data/negine/{NSector,NSectorBorder,NCrosspoint}.java`, `pb/data/AbstractCrosspoint.java`, `pb/data/SectorBorder.java`, `pb/Crosspoint.java`, `pb/Sector.java` |
+| константы сторон блока/края страницы (`ArrowSide`), §10 | `idef0-common/src/main/java/com/ramussoft/pb/idef/visual/MovingPanel.java` |
+| бинарный формат blob'а `VISUAL_ATTRIBUTES`, §10 | `idef0-common/src/main/java/com/dsoft/utils/{DataSaver,DataLoader}.java` |
+| последовательность id точек пересечения (без ресинхронизации по данным, в отличие от id элементов и т. п.), §7 и §10 | `idef0-core/src/main/java/com/ramussoft/idef0/IDEF0Plugin.java` (`getNextCrosspointId`), `idef0-common/.../negine/NDataPlugin.java` (`createCrosspoint`) |
+| механика расширения файла / запуска | `local-client/src/main/java/com/ramussoft/local/FilePlugin.java` |
+| реальные образцы файлов, использованные для проверки | `dest/doc/en/Enterprise activity.rsf`, `dest/doc/ru/Model example.rsf`, `dest/doc/ru/Пример модели.rsf` |
 
 ---
 
-*Everything in this document was derived from the GPL-3.0-licensed Ramus
-source and from `.rsf` sample files distributed in that same repository.*
+*Всё в этом документе выведено из исходного кода Ramus (лицензия
+GPL-3.0) и из образцов файлов `.rsf`, распространяемых в том же
+репозитории.*
 
 ---
 
-## 16. GUI-specific addendum (this repository)
+## 16. Приложение по GUI (этот репозиторий)
 
-Everything above documents the file format and the reverse-engineered
-Python toolkit as originally written. This repository adds a Qt-based GUI
-(`ramus_rsf_tool/gui/`) and one new module, `ramus_rsf_tool/template.py`,
-on top of it. Notes specific to those additions:
+Всё вышесказанное описывает формат файла и реконструированный набор
+инструментов на Python в том виде, в каком он изначально был написан.
+Этот репозиторий добавляет поверх него GUI на основе Qt
+(`ramus_rsf_tool/gui/`) и один новый модуль, `ramus_rsf_tool/template.py`.
+Заметки, относящиеся конкретно к этим дополнениям:
 
-- **`template.py: new_model()`** bootstraps a minimal-but-valid archive
-  from scratch (no template file required) so File > New in the GUI has
-  something to start from: it hand-builds `qualifiers`/`elements`/
-  `attributes`/`qualifiers_attributes` with the standard IDEF0 function-box
-  attribute set (§8) on one root diagram qualifier, plus an
-  `F_BASE_FUNCTIONS` bookkeeping element registering it as a model root
-  (§9). This follows the same "pre-2.0 minimal table shapes" approach
-  documented in §12, and is covered by `tests/test_rsf_model.py` (built,
-  saved, reloaded, values verified) — but, like the rest of the toolkit,
-  has not been opened in a real Ramus GUI.
-- **The GUI's "Raw Tables" tab** is a thin, generic spreadsheet view over
-  `Model.table(path)` (§13) — it has no special knowledge of any table's
-  semantics, which is what makes it usable as the escape hatch §10
-  recommends for arrow/sector editing and anything else with no dedicated
-  editor in the "Attributes" tab.
-- **The "Attributes" tab** dispatches purely on `TYPE_MAP` mode
-  (`scalar`/`struct`/`list`/`stream`) plus each physical column's declared
-  SQL type (§4), with a handful of nicer dedicated widgets for the
-  well-known IDEF0 types (`Color`, `FRectangle`, `Font`, `Status`) — so any
-  attribute type not specifically named there (including ones this
-  document doesn't cover) still gets a usable, if generic, editor rather
-  than being hidden.
+- **`template.py: new_model()`** собирает минимальный, но валидный архив
+  с нуля (файл-шаблон не требуется), чтобы пункту «Файл > Создать» в GUI
+  было с чего начать: он вручную строит `qualifiers`/`elements`/
+  `attributes`/`qualifiers_attributes` со стандартным набором атрибутов
+  функционального блока IDEF0 (§8) на одном корневом квалификаторе
+  диаграммы, плюс учётный элемент `F_BASE_FUNCTIONS`, регистрирующий его
+  как корень модели (§9). Это следует тому же подходу «минимальных форм
+  таблиц до версии 2.0», задокументированному в §12, и покрыто
+  `tests/test_rsf_model.py` (построено, сохранено, перезагружено,
+  значения проверены) — но, как и остальной набор инструментов, не было
+  открыто в настоящем GUI Ramus.
+- **Вкладка «Сырые таблицы» в GUI** — это тонкий обобщённый табличный вид
+  поверх `Model.table(path)` (§13) — у неё нет специального знания о
+  семантике какой-либо таблицы, что и делает её пригодной в качестве
+  аварийного люка, который §10 рекомендует для редактирования
+  стрелок/секторов и всего прочего, для чего нет выделенного редактора
+  на вкладке «Атрибуты».
+- **Вкладка «Атрибуты»** диспетчеризует исключительно по режиму
+  `TYPE_MAP` (`scalar`/`struct`/`list`/`stream`) плюс по объявленному
+  SQL-типу каждого физического столбца (§4), с горсткой более приятных
+  выделенных виджетов для хорошо известных типов IDEF0 (`Color`,
+  `FRectangle`, `Font`, `Status`) — так что любой тип атрибута, конкретно
+  здесь не названный (в том числе те, что не охвачены этим документом),
+  всё равно получает пригодный, пусть и обобщённый, редактор, а не
+  скрывается.

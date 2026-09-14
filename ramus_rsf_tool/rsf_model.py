@@ -268,7 +268,7 @@ class Model:
         table in the file, including ones with no semantic mapping above."""
         t = self.arc.get_table(path)
         if t is None:
-            raise KeyError("No such table in this file: %s" % path)
+            raise KeyError("В этом файле нет такой таблицы: %s" % path)
         return t
 
     def table_paths(self) -> List[str]:
@@ -357,8 +357,8 @@ class Model:
             t = self.arc.get_table(path)
             if t is None:
                 raise KeyError(
-                    "This file has no %s table (the attribute type it "
-                    "backs has never been used in this file)." % path)
+                    "В этом файле нет таблицы %s (тип атрибута, который она "
+                    "обслуживает, ни разу не использовался в этом файле)." % path)
             self._value_tables[path] = t
         return t
 
@@ -385,12 +385,12 @@ class Model:
         """
         atype = self.attribute_type(attribute_id)
         if atype is None:
-            raise KeyError("Unknown attribute id %s" % attribute_id)
+            raise KeyError("Неизвестный id атрибута %s" % attribute_id)
         info = TYPE_MAP.get(atype)
         if info is None:
-            raise KeyError("No physical-table mapping known for attribute "
-                            "type %s (attribute id %s). Use model.table(...) "
-                            "to inspect it via the raw path if you know it."
+            raise KeyError("Нет известного сопоставления с физической таблицей для "
+                            "типа атрибута %s (id атрибута %s). Используйте model.table(...), "
+                            "чтобы изучить его по сырому пути, если вы его знаете."
                             % (atype, attribute_id))
         if info.mode == "stream":
             path = self._stream_path(element_id, attribute_id, atype, info)
@@ -417,11 +417,11 @@ class Model:
         'list'-mode types -- use model.table(path) directly for those."""
         atype = self.attribute_type(attribute_id)
         if atype is None:
-            raise KeyError("Unknown attribute id %s" % attribute_id)
+            raise KeyError("Неизвестный id атрибута %s" % attribute_id)
         info = TYPE_MAP.get(atype)
         if info is None:
-            raise KeyError("No physical-table mapping known for attribute "
-                            "type %s (attribute id %s)" % (atype, attribute_id))
+            raise KeyError("Нет известного сопоставления с физической таблицей для "
+                            "типа атрибута %s (id атрибута %s)" % (atype, attribute_id))
 
         if info.mode == "stream":
             path = self._stream_path(element_id, attribute_id, atype, info)
@@ -429,8 +429,8 @@ class Model:
             return
 
         if info.mode == "list":
-            raise ValueError("Attribute type %s is list-valued; use "
-                              "model.table(%r) to add/remove rows directly."
+            raise ValueError("Тип атрибута %s имеет вид «список»; используйте "
+                              "model.table(%r), чтобы добавлять/удалять строки напрямую."
                               % (atype, info.table_path))
 
         t = self._get_or_create_vtable(info.table_path, atype)
@@ -444,7 +444,7 @@ class Model:
             row[info.columns[0]] = value
         else:
             if not isinstance(value, dict):
-                raise TypeError("struct-mode attribute expects a dict of "
+                raise TypeError("атрибут в режиме struct ожидает словарь с ключами "
                                  "%s" % info.columns)
             for k, v in value.items():
                 row[k.upper()] = v
@@ -550,7 +550,7 @@ class Model:
         own ID sequences from MAX(id) on every create (see
         RAMUS_RSF_FORMAT.md, "ID allocation")."""
         if self.t_elements is None:
-            raise RuntimeError("This file has no data/elements.xml table")
+            raise RuntimeError("В этом файле нет таблицы data/elements.xml")
         eid = self.new_element_id()
         self.t_elements.rows.append({
             "ELEMENT_ID": eid, "ELEMENT_NAME": name, "QUALIFIER_ID": qualifier_id,
@@ -562,7 +562,7 @@ class Model:
     def set_element_name(self, element_id: int, name: str) -> None:
         e = self.elements.get(element_id)
         if e is None:
-            raise KeyError("No such element: %s" % element_id)
+            raise KeyError("Нет такого элемента: %s" % element_id)
         e["ELEMENT_NAME"] = name
 
     def delete_element(self, element_id: int) -> None:
@@ -601,7 +601,7 @@ class Model:
         qid = self.element_qualifier(element_id)
         aid = self.find_attribute(qid, "F_BOUNDS")
         if aid is None:
-            raise KeyError("Qualifier %s has no F_BOUNDS attribute" % qid)
+            raise KeyError("У квалификатора %s нет атрибута F_BOUNDS" % qid)
         self.set_value(element_id, aid, {"X": x, "Y": y, "WIDTH": width, "HEIGHT": height})
 
     def set_background(self, element_id: int, argb: int) -> None:
@@ -614,21 +614,21 @@ class Model:
         qid = self.element_qualifier(element_id)
         aid = self.find_attribute(qid, attr_name)
         if aid is None:
-            raise KeyError("Qualifier %s has no %s attribute" % (qid, attr_name))
+            raise KeyError("У квалификатора %s нет атрибута %s" % (qid, attr_name))
         self.set_value(element_id, aid, argb)
 
     def set_font(self, element_id: int, name: str, style: int, size: int) -> None:
         qid = self.element_qualifier(element_id)
         aid = self.find_attribute(qid, "F_FONT")
         if aid is None:
-            raise KeyError("Qualifier %s has no F_FONT attribute" % qid)
+            raise KeyError("У квалификатора %s нет атрибута F_FONT" % qid)
         self.set_value(element_id, aid, {"NAME": name, "STYLE": style, "SIZE": size})
 
     def set_status(self, element_id: int, status_type: int, other_name: str = "") -> None:
         qid = self.element_qualifier(element_id)
         aid = self.find_attribute(qid, "F_STATUS")
         if aid is None:
-            raise KeyError("Qualifier %s has no F_STATUS attribute" % qid)
+            raise KeyError("У квалификатора %s нет атрибута F_STATUS" % qid)
         self.set_value(element_id, aid, {"TYPE": status_type, "OTHER_NAME": other_name})
 
     def clone_qualifier_as_container(self, source_qualifier_id: int, new_name: str,
@@ -643,11 +643,11 @@ class Model:
         it. See RAMUS_RSF_FORMAT.md, 'Building a new diagram from a
         template'."""
         if self.t_qualifiers is None or self.t_qual_attrs is None:
-            raise RuntimeError("This file is missing data/qualifiers.xml or "
+            raise RuntimeError("В этом файле отсутствует data/qualifiers.xml или "
                                 "data/qualifiers_attributes.xml")
         src = self.qualifiers.get(source_qualifier_id)
         if src is None:
-            raise KeyError("No such qualifier: %s" % source_qualifier_id)
+            raise KeyError("Нет такого квалификатора: %s" % source_qualifier_id)
 
         new_qid = self.new_qualifier_id()
         self.t_qualifiers.rows.append({
@@ -717,8 +717,8 @@ class Model:
         qid = self.element_qualifier(base_functions_element_id)
         aid = self.find_attribute(qid, "F_BASE_FUNCTION_QUALIFIER_ID")
         if aid is None:
-            raise KeyError("Element %s is not under the F_BASE_FUNCTIONS "
-                            "qualifier (or that qualifier lacks "
+            raise KeyError("Элемент %s не относится к квалификатору "
+                            "F_BASE_FUNCTIONS (или у этого квалификатора нет "
                             "F_BASE_FUNCTION_QUALIFIER_ID)" % base_functions_element_id)
         self.set_value(base_functions_element_id, aid, root_qualifier_id)
 
@@ -740,7 +740,7 @@ class Model:
         multiple links."""
         atype = self.attribute_type(attribute_id)
         if atype != ("Core", "OtherElement"):
-            raise TypeError("Attribute %s is not Core.OtherElement (got %r)"
+            raise TypeError("Атрибут %s не является Core.OtherElement (получено %r)"
                              % (attribute_id, atype))
         info = TYPE_MAP[atype]
         t = self._get_or_create_vtable(info.table_path, atype)
@@ -768,7 +768,7 @@ class Model:
         belong to a completely unrelated qualifier."""
         atype = self.attribute_type(attribute_id)
         if atype != ("Core", "Hierarchical"):
-            raise TypeError("Attribute %s is not Core.Hierarchical (got %r)"
+            raise TypeError("Атрибут %s не является Core.Hierarchical (получено %r)"
                              % (attribute_id, atype))
         if previous_element_id is None:
             qid = self.element_qualifier(element_id)
@@ -848,7 +848,7 @@ class Model:
 
         if self.t_qualifiers is None or self.t_attributes is None or \
                 self.t_qual_attrs is None:
-            raise RuntimeError("This file is missing one of data/qualifiers.xml, "
+            raise RuntimeError("В этом файле отсутствует один из файлов data/qualifiers.xml, "
                                 "data/attributes.xml, data/qualifiers_attributes.xml")
 
         def _get_or_add_attribute(name: str, plugin: str, type_name: str) -> int:
@@ -1015,7 +1015,7 @@ class Model:
 
         Returns the new Stream element id, as add_arrow() does."""
         if direction not in ("in", "out"):
-            raise ValueError("direction must be 'in' or 'out'")
+            raise ValueError("direction должно быть 'in' или 'out'")
         sect_qid, stream_qid = self.ensure_arrow_support()
         tt = TunnelType.SOFT if tunnel else TunnelType.HARD
         stream_eid = self._new_stream(stream_qid, name)
@@ -1160,8 +1160,8 @@ class ImportResult:
     warnings: List[str] = _dataclass_field(default_factory=list)
 
     def summary(self) -> str:
-        return ("%d qualifier name(s), %d element(s) (%d value(s) total) updated; "
-                "%d warning(s)." % (self.qualifiers_updated, self.elements_updated,
+        return ("Обновлено имён квалификаторов: %d, элементов: %d (всего значений: %d); "
+                "предупреждений: %d." % (self.qualifiers_updated, self.elements_updated,
                                      self.values_updated, len(self.warnings)))
 
 
@@ -1194,7 +1194,7 @@ def apply_json_dump(model: Model, data: Dict[str, Any]) -> ImportResult:
     for q in data.get("qualifiers", []):
         qid = q.get("id")
         if qid not in model.qualifiers:
-            result.warnings.append("Qualifier %r not found in this file; skipped." % (qid,))
+            result.warnings.append("Квалификатор %r не найден в этом файле; пропущен." % (qid,))
             continue
         new_qname = q.get("name")
         if isinstance(new_qname, str) and new_qname != model.qualifiers[qid].get("QUALIFIER_NAME"):
@@ -1203,11 +1203,11 @@ def apply_json_dump(model: Model, data: Dict[str, Any]) -> ImportResult:
         for e in q.get("elements", []):
             eid = e.get("id")
             if eid not in model.elements:
-                result.warnings.append("Element %r (qualifier %r) not found; skipped." % (eid, qid))
+                result.warnings.append("Элемент %r (квалификатор %r) не найден; пропущен." % (eid, qid))
                 continue
             if model.elements[eid].get("QUALIFIER_ID") != qid:
                 result.warnings.append(
-                    "Element %r is no longer under qualifier %r; skipped." % (eid, qid))
+                    "Элемент %r больше не относится к квалификатору %r; пропущен." % (eid, qid))
                 continue
             if _apply_element_dump(model, qid, eid, e, result):
                 result.elements_updated += 1
@@ -1235,24 +1235,24 @@ def _apply_element_dump(model: Model, qid: int, eid: int, e: Dict[str, Any],
         aid = _resolve_attribute_key(model, qid, key)
         if aid is None:
             result.warnings.append(
-                "Attribute %r not found on qualifier %r (element %r); skipped." % (key, qid, eid))
+                "Атрибут %r не найден у квалификатора %r (элемент %r); пропущен." % (key, qid, eid))
             continue
         atype = model.attribute_type(aid)
         info = TYPE_MAP.get(atype)
         if info is None:
             result.warnings.append(
-                "No known editor for attribute %r (element %r); skipped." % (key, eid))
+                "Нет известного редактора для атрибута %r (элемент %r); пропущен." % (key, eid))
             continue
 
         if info.mode == "list":
             result.warnings.append(
-                "Attribute %r is list-valued; edit it via the Raw Tables view "
-                "instead (element %r)." % (key, eid))
+                "Атрибут %r имеет тип-список; редактируйте его через вкладку "
+                "«Сырые таблицы» (элемент %r)." % (key, eid))
             continue
         if info.mode == "stream":
             result.warnings.append(
-                "Attribute %r is file/stream-valued; the JSON dump doesn't carry "
-                "its bytes, so it can't be re-imported (element %r)." % (key, eid))
+                "Атрибут %r хранится как файл/поток; JSON-дамп не содержит "
+                "его байты, поэтому он не может быть повторно импортирован (элемент %r)." % (key, eid))
             continue
 
         if info.mode == "scalar":
@@ -1268,7 +1268,7 @@ def _apply_element_dump(model: Model, qid: int, eid: int, e: Dict[str, Any],
                     model.set_value(eid, aid, new_value)
                 except (TypeError, ValueError) as ex:
                     result.warnings.append(
-                        "Could not set %r on element %r: %s" % (key, eid, ex))
+                        "Не удалось установить %r у элемента %r: %s" % (key, eid, ex))
                     continue
             result.values_updated += 1
             changed = True
@@ -1276,7 +1276,7 @@ def _apply_element_dump(model: Model, qid: int, eid: int, e: Dict[str, Any],
         elif info.mode == "struct":
             if not isinstance(new_value, dict):
                 result.warnings.append(
-                    "Attribute %r expects an object, got %s (element %r); skipped."
+                    "Атрибут %r ожидает объект, получено %s (элемент %r); пропущен."
                     % (key, type(new_value).__name__, eid))
                 continue
             current = model.get_value(eid, aid) or {}
@@ -1292,7 +1292,7 @@ def _apply_element_dump(model: Model, qid: int, eid: int, e: Dict[str, Any],
             try:
                 model.set_value(eid, aid, patch)
             except (TypeError, ValueError) as ex:
-                result.warnings.append("Could not set %r on element %r: %s" % (key, eid, ex))
+                result.warnings.append("Не удалось установить %r у элемента %r: %s" % (key, eid, ex))
                 continue
             result.values_updated += len(patch)
             changed = True

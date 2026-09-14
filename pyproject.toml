@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ramus-rsf-tool"
 version = "1.0.0"
-description = "Reader/writer/editor for Ramus (.rsf) IDEF0/DFD model files, with a Qt GUI"
+description = "Чтение/запись/редактирование файлов моделей IDEF0/DFD Ramus (.rsf), с графическим интерфейсом на Qt"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"

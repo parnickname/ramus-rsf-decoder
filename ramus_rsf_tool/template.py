@@ -45,7 +45,7 @@ def _table(name_no_ext: str, cols_types) -> Table:
     return Table(source_table=name_no_ext, prefix="ramus_", fields=fields, rows=[])
 
 
-def new_model(root_diagram_name: str = "Root Diagram") -> Model:
+def new_model(root_diagram_name: str = "Корневая диаграмма") -> Model:
     """Build an empty Model with one root IDEF0 diagram qualifier, ready
     for add_function_box() calls. Equivalent in spirit to Ramus's
     File > New, minus anything not needed to produce a file real Ramus

@@ -1,5 +1,6 @@
-"""Modal dialogs for structural edits: new element/qualifier, new function
-box, clone-qualifier-as-diagram, register model root, new arrow."""
+"""Модальные диалоги для структурных правок: новый элемент/квалификатор,
+новый функциональный блок, клонирование квалификатора как диаграммы,
+регистрация корня модели, новая стрелка."""
 from __future__ import annotations
 
 from typing import Optional
@@ -20,17 +21,17 @@ def _qualifier_combo(model: Model, include_system: bool = True) -> QComboBox:
                           key=lambda kv: (kv[1].get("QUALIFIER_NAME") or "")):
         if q.get("QUALIFIER_SYSTEM") and not include_system:
             continue
-        label = "%s (%d)" % (q.get("QUALIFIER_NAME") or "(unnamed)", qid)
+        label = "%s (%d)" % (q.get("QUALIFIER_NAME") or "(без имени)", qid)
         combo.addItem(label, qid)
     return combo
 
 
 class NewElementDialog(QDialog):
-    """Add a bare element under a chosen qualifier."""
+    """Добавить обычный элемент под выбранным квалификатором."""
 
     def __init__(self, model: Model, default_qualifier: Optional[int], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New element")
+        self.setWindowTitle("Новый элемент")
         self.model = model
         layout = QFormLayout(self)
         self.qual_combo = _qualifier_combo(model)
@@ -39,8 +40,8 @@ class NewElementDialog(QDialog):
             if idx >= 0:
                 self.qual_combo.setCurrentIndex(idx)
         self.name_edit = QLineEdit()
-        layout.addRow("Qualifier:", self.qual_combo)
-        layout.addRow("Name:", self.name_edit)
+        layout.addRow("Квалификатор:", self.qual_combo)
+        layout.addRow("Имя:", self.name_edit)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                     QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -52,18 +53,19 @@ class NewElementDialog(QDialog):
 
 
 class NewQualifierDialog(QDialog):
-    """Create a bare qualifier (no attribute set) -- for a fresh EAV
-    'class' unrelated to IDEF0 function boxes, e.g. a custom browser
-    table. Use 'Clone qualifier as diagram' instead if you want a new
-    IDEF0 diagram page."""
+    """Создать пустой квалификатор (без набора атрибутов) -- для нового
+    EAV-'класса', не связанного с функциональными блоками IDEF0, например,
+    пользовательской таблицы-браузера. Используйте 'Клонировать
+    квалификатор как диаграмму', если нужна новая страница диаграммы
+    IDEF0."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New (empty) qualifier")
+        self.setWindowTitle("Новый (пустой) квалификатор")
         layout = QFormLayout(self)
         self.name_edit = QLineEdit()
-        self.system_check = QCheckBox("System qualifier")
-        layout.addRow("Name:", self.name_edit)
+        self.system_check = QCheckBox("Системный квалификатор")
+        layout.addRow("Имя:", self.name_edit)
         layout.addRow("", self.system_check)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                     QDialogButtonBox.StandardButton.Cancel)
@@ -76,14 +78,14 @@ class NewQualifierDialog(QDialog):
 
 
 class NewFunctionBoxDialog(QDialog):
-    """Full add_function_box() form: name, bounds, colors, font, status,
-    type -- for a qualifier that already carries the standard F_* set
-    (any qualifier created via 'Clone qualifier as diagram', or any
-    pre-existing Function qualifier)."""
+    """Полная форма add_function_box(): имя, границы, цвета, шрифт,
+    статус, тип -- для квалификатора, который уже несёт стандартный набор
+    F_* (любой квалификатор, созданный через 'Клонировать квалификатор как
+    диаграмму', или любой уже существующий квалификатор Function)."""
 
     def __init__(self, model: Model, default_qualifier: Optional[int], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New function box")
+        self.setWindowTitle("Новый функциональный блок")
         self.model = model
         layout = QFormLayout(self)
 
@@ -92,10 +94,10 @@ class NewFunctionBoxDialog(QDialog):
             idx = self.qual_combo.findData(default_qualifier)
             if idx >= 0:
                 self.qual_combo.setCurrentIndex(idx)
-        layout.addRow("Qualifier (diagram):", self.qual_combo)
+        layout.addRow("Квалификатор (диаграмма):", self.qual_combo)
 
-        self.name_edit = QLineEdit("New function")
-        layout.addRow("Name:", self.name_edit)
+        self.name_edit = QLineEdit("Новая функция")
+        layout.addRow("Имя:", self.name_edit)
 
         self.x = self._spin(-100000, 100000, 40)
         self.y = self._spin(-100000, 100000, 40)
@@ -103,26 +105,26 @@ class NewFunctionBoxDialog(QDialog):
         self.h = self._spin(1, 100000, 80)
         layout.addRow("X:", self.x)
         layout.addRow("Y:", self.y)
-        layout.addRow("Width:", self.w)
-        layout.addRow("Height:", self.h)
+        layout.addRow("Ширина:", self.w)
+        layout.addRow("Высота:", self.h)
 
         self.bg = ColorButton(argb(0, 255, 0))
         self.fg = ColorButton(argb(0, 0, 0))
-        layout.addRow("Background:", self.bg)
-        layout.addRow("Foreground:", self.fg)
+        layout.addRow("Фон:", self.bg)
+        layout.addRow("Передний план:", self.fg)
 
         self.font_name = QLineEdit("Dialog")
         self.font_size = QSpinBox()
         self.font_size.setRange(1, 400)
         self.font_size.setValue(12)
-        layout.addRow("Font name:", self.font_name)
-        layout.addRow("Font size:", self.font_size)
+        layout.addRow("Название шрифта:", self.font_name)
+        layout.addRow("Размер шрифта:", self.font_size)
 
         self.func_type = QSpinBox()
         self.func_type.setRange(-1000, 1000)
         self.func_type.setValue(3)
-        self.func_type.setToolTip("F_TYPE; 3 = ordinary function box on every sample file")
-        layout.addRow("Function type:", self.func_type)
+        self.func_type.setToolTip("F_TYPE; 3 = обычный функциональный блок во всех образцах файлов")
+        layout.addRow("Тип функции:", self.func_type)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
                                     QDialogButtonBox.StandardButton.Cancel)
@@ -150,23 +152,24 @@ class NewFunctionBoxDialog(QDialog):
 
 
 class CloneQualifierDialog(QDialog):
-    """clone_qualifier_as_container(): build a new IDEF0 diagram page by
-    copying an existing Function qualifier's full attribute set."""
+    """clone_qualifier_as_container(): построить новую страницу диаграммы
+    IDEF0, скопировав полный набор атрибутов существующего квалификатора
+    Function."""
 
     def __init__(self, model: Model, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New diagram from template")
+        self.setWindowTitle("Новая диаграмма из шаблона")
         layout = QFormLayout(self)
         self.source_combo = _qualifier_combo(model, include_system=False)
-        self.name_edit = QLineEdit("New diagram")
-        self.register_root = QCheckBox("Register as a new top-level model (F_BASE_FUNCTIONS)")
+        self.name_edit = QLineEdit("Новая диаграмма")
+        self.register_root = QCheckBox("Зарегистрировать как новую модель верхнего уровня (F_BASE_FUNCTIONS)")
         self.register_root.setChecked(True)
-        layout.addRow("Copy attribute set from:", self.source_combo)
-        layout.addRow("New diagram name:", self.name_edit)
+        layout.addRow("Скопировать набор атрибутов из:", self.source_combo)
+        layout.addRow("Имя новой диаграммы:", self.name_edit)
         layout.addRow("", self.register_root)
-        note = QLabel("Copies every attribute Ramus's checkIDEF0Attributes() requires "
-                       "(Name, F_BOUNDS, F_BACKGROUND, ...) from the chosen qualifier "
-                       "onto a new one. See RAMUS_RSF_FORMAT.md section 9.")
+        note = QLabel("Копирует каждый атрибут, который требует checkIDEF0Attributes() "
+                       "в Ramus (Name, F_BOUNDS, F_BACKGROUND, ...), из выбранного "
+                       "квалификатора на новый. См. RAMUS_RSF_FORMAT.md, раздел 9.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #888;")
         layout.addRow(note)
@@ -183,23 +186,25 @@ class CloneQualifierDialog(QDialog):
 
 
 class RegisterModelRootDialog(QDialog):
-    """register_model_root(): mark an existing qualifier as a top-level
-    model root by pointing a new F_BASE_FUNCTIONS bookkeeping element at
-    it. Requires the file to already have an F_BASE_FUNCTIONS qualifier
-    carrying F_BASE_FUNCTION_QUALIFIER_ID (true of every real Ramus file,
-    and of files started via File > New in this app); 'New diagram from
-    template' does this automatically and is the easier path for a
-    brand-new diagram."""
+    """register_model_root(): пометить существующий квалификатор как
+    корень модели верхнего уровня, направив на него новый учётный элемент
+    F_BASE_FUNCTIONS. Требует, чтобы в файле уже был квалификатор
+    F_BASE_FUNCTIONS с атрибутом F_BASE_FUNCTION_QUALIFIER_ID (верно для
+    любого настоящего файла Ramus, и для файлов, начатых через Файл >
+    Создать в этом приложении); 'Новая диаграмма из шаблона' делает это
+    автоматически и является более простым путём для совершенно новой
+    диаграммы."""
 
     def __init__(self, model: Model, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Register model root")
+        self.setWindowTitle("Регистрация корня модели")
         layout = QFormLayout(self)
         self.qual_combo = _qualifier_combo(model, include_system=False)
-        layout.addRow("Qualifier to register as root:", self.qual_combo)
-        note = QLabel("Adds a new element under the F_BASE_FUNCTIONS system "
-                       "qualifier pointing at the chosen qualifier, the same "
-                       "way Ramus marks a top-level model in its navigator.")
+        layout.addRow("Квалификатор для регистрации как корень:", self.qual_combo)
+        note = QLabel("Добавляет новый элемент под системным квалификатором "
+                       "F_BASE_FUNCTIONS, указывающий на выбранный квалификатор, "
+                       "тем же способом, каким Ramus отмечает модель верхнего "
+                       "уровня в своём навигаторе.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #888;")
         layout.addRow(note)
@@ -214,23 +219,23 @@ class RegisterModelRootDialog(QDialog):
 
 
 _BOX_SIDES = [
-    ("Input (left)", ArrowSide.INPUT),
-    ("Control (top)", ArrowSide.CONTROL),
-    ("Output (right)", ArrowSide.OUTPUT),
-    ("Mechanism (bottom)", ArrowSide.MECHANISM),
+    ("Input (слева)", ArrowSide.INPUT),
+    ("Control (сверху)", ArrowSide.CONTROL),
+    ("Output (справа)", ArrowSide.OUTPUT),
+    ("Mechanism (снизу)", ArrowSide.MECHANISM),
 ]
 _PAGE_SIDES = [
-    ("Left edge", ArrowSide.LEFT),
-    ("Top edge", ArrowSide.TOP),
-    ("Right edge", ArrowSide.RIGHT),
-    ("Bottom edge", ArrowSide.BOTTOM),
+    ("Левый край", ArrowSide.LEFT),
+    ("Верхний край", ArrowSide.TOP),
+    ("Правый край", ArrowSide.RIGHT),
+    ("Нижний край", ArrowSide.BOTTOM),
 ]
 
 
 class EndpointPicker(QGroupBox):
-    """One end of a new arrow: either a side of a function box in the
-    current diagram, or a side of the diagram page itself (a boundary
-    arrow, entering/leaving the page from outside)."""
+    """Один конец новой стрелки: либо сторона функционального блока на
+    текущей диаграмме, либо сторона самой страницы диаграммы (граничная
+    стрелка, входящая на страницу или покидающая её извне)."""
 
     def __init__(self, title: str, model: Model, qualifier_id: int,
                  default_element: Optional[int] = None, parent=None):
@@ -239,8 +244,8 @@ class EndpointPicker(QGroupBox):
         self.qualifier_id = qualifier_id
         layout = QVBoxLayout(self)
 
-        self.box_radio = QRadioButton("Function box:")
-        self.boundary_radio = QRadioButton("Diagram page boundary:")
+        self.box_radio = QRadioButton("Функциональный блок:")
+        self.boundary_radio = QRadioButton("Граница страницы диаграммы:")
         self.box_radio.setChecked(True)
         group = QButtonGroup(self)
         group.addButton(self.box_radio)
@@ -249,7 +254,7 @@ class EndpointPicker(QGroupBox):
         box_row = QHBoxLayout()
         self.elem_combo = QComboBox()
         for eid in model.elements_by_qualifier.get(qualifier_id, []):
-            name = model.elements[eid].get("ELEMENT_NAME") or "(unnamed)"
+            name = model.elements[eid].get("ELEMENT_NAME") or "(без имени)"
             self.elem_combo.addItem("%s (%d)" % (name, eid), eid)
         if default_element is not None:
             idx = self.elem_combo.findData(default_element)
@@ -293,34 +298,36 @@ class EndpointPicker(QGroupBox):
 
 
 class NewArrowDialog(QDialog):
-    """Add a new IDEF0 arrow (Model.add_arrow() / add_boundary_arrow()):
-    box-to-box, or box-to-page-boundary in either direction."""
+    """Добавить новую стрелку IDEF0 (Model.add_arrow() /
+    add_boundary_arrow()): блок-к-блоку, либо блок-к-границе-страницы в
+    любом направлении."""
 
     def __init__(self, model: Model, qualifier_id: int,
                  default_from: Optional[int] = None,
                  default_to: Optional[int] = None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New arrow")
+        self.setWindowTitle("Новая стрелка")
         self.model = model
         self.qualifier_id = qualifier_id
         layout = QVBoxLayout(self)
 
         form = QFormLayout()
         self.name_edit = QLineEdit()
-        self.tunnel_check = QCheckBox("Tunneled (not shown at parent/child level)")
-        form.addRow("Label (optional):", self.name_edit)
+        self.tunnel_check = QCheckBox("Туннелирована (не показывается на уровне родитель/потомок)")
+        form.addRow("Подпись (необязательно):", self.name_edit)
         form.addRow("", self.tunnel_check)
         layout.addLayout(form)
 
-        self.from_picker = EndpointPicker("From", model, qualifier_id, default_from)
-        self.to_picker = EndpointPicker("To", model, qualifier_id, default_to)
+        self.from_picker = EndpointPicker("Откуда", model, qualifier_id, default_from)
+        self.to_picker = EndpointPicker("Куда", model, qualifier_id, default_to)
         layout.addWidget(self.from_picker)
         layout.addWidget(self.to_picker)
 
         note = QLabel(
-            "Both boxes must be on the same diagram. Geometry is left for "
-            "Ramus to auto-route, matching how every unmodified arrow in a "
-            "real file looks -- see RAMUS_RSF_FORMAT.md section 10.")
+            "Оба блока должны быть на одной диаграмме. Геометрия оставлена "
+            "на усмотрение автоматической прокладки Ramus, как выглядит "
+            "любая немодифицированная стрелка в реальном файле -- см. "
+            "RAMUS_RSF_FORMAT.md, раздел 10.")
         note.setWordWrap(True)
         note.setStyleSheet("color: #888;")
         layout.addWidget(note)
@@ -333,23 +340,23 @@ class NewArrowDialog(QDialog):
 
     def _on_accept(self):
         if self.from_picker.is_boundary() and self.to_picker.is_boundary():
-            QMessageBox.warning(self, "Not supported",
-                                 "An arrow can't run from the page boundary "
-                                 "straight to the page boundary -- at least "
-                                 "one end must be a function box.")
+            QMessageBox.warning(self, "Не поддерживается",
+                                 "Стрелка не может идти от границы страницы "
+                                 "прямо к границе страницы -- хотя бы один "
+                                 "конец должен быть функциональным блоком.")
             return
         if not self.from_picker.is_boundary() and self.from_picker.element_and_side()[0] is None:
-            QMessageBox.warning(self, "No elements", "This diagram has no boxes yet.")
+            QMessageBox.warning(self, "Нет элементов", "На этой диаграмме пока нет блоков.")
             return
         if not self.to_picker.is_boundary() and self.to_picker.element_and_side()[0] is None:
-            QMessageBox.warning(self, "No elements", "This diagram has no boxes yet.")
+            QMessageBox.warning(self, "Нет элементов", "На этой диаграмме пока нет блоков.")
             return
         self.accept()
 
     def result_values(self):
-        """Returns a dict ready to drive Model.add_arrow()/
-        add_boundary_arrow(): either {'kind': 'arrow', 'from_element_id',
-        'from_side', 'to_element_id', 'to_side', 'name', 'tunnel'} or
+        """Возвращает словарь, готовый для передачи в Model.add_arrow()/
+        add_boundary_arrow(): либо {'kind': 'arrow', 'from_element_id',
+        'from_side', 'to_element_id', 'to_side', 'name', 'tunnel'}, либо
         {'kind': 'boundary', 'element_id', 'box_side', 'page_side',
         'direction', 'name', 'tunnel'}."""
         name = self.name_edit.text()
@@ -378,16 +385,16 @@ class NewArrowDialog(QDialog):
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("About")
+        self.setWindowTitle("О программе")
         layout = QVBoxLayout(self)
         from ... import __version__
         text = QLabel(
-            "<h3>Ramus RSF Editor</h3>"
-            "<p>Version %s</p>"
-            "<p>A native Linux GUI for reading and editing Ramus IDEF0/DFD "
-            "<code>.rsf</code> model files, built on a clean-room reimplementation "
-            "of the file format (see RAMUS_RSF_FORMAT.md).</p>"
-            "<p>Not affiliated with the Ramus project.</p>" % __version__)
+            "<h3>Редактор Ramus RSF</h3>"
+            "<p>Версия %s</p>"
+            "<p>Нативный GUI для Linux для чтения и редактирования файлов моделей "
+            "IDEF0/DFD Ramus <code>.rsf</code>, построенный на реализации формата "
+            "файла методом «чистой комнаты» (см. RAMUS_RSF_FORMAT.md).</p>"
+            "<p>Не связано с проектом Ramus.</p>" % __version__)
         text.setWordWrap(True)
         text.setTextFormat(text.textFormat().RichText)
         layout.addWidget(text)

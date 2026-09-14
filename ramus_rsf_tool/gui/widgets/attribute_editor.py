@@ -1,8 +1,8 @@
 """
-The main "Attributes" tab: every attribute the selected element's
-qualifier carries, rendered with an editor appropriate to its declared
-type (TYPE_MAP in rsf_model.py), and committed back to the Model the
-instant it changes -- there is no separate "Apply" step.
+Основная вкладка "Атрибуты": каждый атрибут, который несёт квалификатор
+выбранного элемента, отрисовывается редактором, подходящим для его
+объявленного типа (TYPE_MAP в rsf_model.py), и сразу же фиксируется
+обратно в Model -- отдельного шага "Применить" нет.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from .field_widgets import make_value_widget
 
 class AttributeEditorPanel(QWidget):
     changed = pyqtSignal(str)             # kind: "name" | "value"
-    openTableRequested = pyqtSignal(str)  # table path to jump to in Raw Tables tab
+    openTableRequested = pyqtSignal(str)  # путь к таблице для перехода во вкладку "Сырые таблицы"
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -32,7 +32,7 @@ class AttributeEditorPanel(QWidget):
         self.element_id: Optional[int] = None
 
         outer = QVBoxLayout(self)
-        self.header = QLabel("No element selected.")
+        self.header = QLabel("Элемент не выбран.")
         self.header.setStyleSheet("font-weight: bold; padding: 4px;")
         outer.addWidget(self.header)
 
@@ -44,7 +44,7 @@ class AttributeEditorPanel(QWidget):
         self.scroll.setWidget(self._body)
         outer.addWidget(self.scroll, 1)
 
-    # -- wiring --------------------------------------------------------
+    # -- связывание --------------------------------------------------------
     def set_model(self, model: Optional[Model]):
         self.model = model
         self.set_element(None)
@@ -53,7 +53,7 @@ class AttributeEditorPanel(QWidget):
         self.element_id = element_id
         self.rebuild()
 
-    # -- build -----------------------------------------------------------
+    # -- построение -----------------------------------------------------------
     def _clear_form(self):
         while self.form.rowCount():
             self.form.removeRow(0)
@@ -61,16 +61,16 @@ class AttributeEditorPanel(QWidget):
     def rebuild(self):
         self._clear_form()
         if self.model is None or self.element_id is None:
-            self.header.setText("No element selected.")
+            self.header.setText("Элемент не выбран.")
             return
         e = self.model.elements.get(self.element_id)
         if e is None:
-            self.header.setText("Element %s no longer exists." % self.element_id)
+            self.header.setText("Элемент %s больше не существует." % self.element_id)
             return
         qid = e.get("QUALIFIER_ID")
         qname = self.model.qualifier_name(qid)
-        self.header.setText("Element %d — %s   (qualifier %s: %s)" %
-                             (self.element_id, e.get("ELEMENT_NAME") or "(unnamed)",
+        self.header.setText("Элемент %d — %s   (квалификатор %s: %s)" %
+                             (self.element_id, e.get("ELEMENT_NAME") or "(без имени)",
                               qid, qname))
 
         for aid in self._ordered_attribute_ids(qid):
@@ -83,7 +83,7 @@ class AttributeEditorPanel(QWidget):
             atype = (plugin, typ)
             info = TYPE_MAP.get(atype)
             label = QLabel(name)
-            label.setToolTip("attribute id %d, type %s.%s" % (aid, plugin, typ))
+            label.setToolTip("id атрибута %d, тип %s.%s" % (aid, plugin, typ))
             row_widget = self._build_row(aid, atype, info)
             self.form.addRow(label, row_widget)
 
@@ -98,10 +98,10 @@ class AttributeEditorPanel(QWidget):
             return [r["ATTRIBUTE_ID"] for r in rows]
         return list(self.model.qualifier_attribute_ids.get(qid, []))
 
-    # -- per-attribute row builders --------------------------------------
+    # -- построители строк для каждого атрибута --------------------------------
     def _build_row(self, aid: int, atype, info: Optional[TypeInfo]) -> QWidget:
         if info is None:
-            w = QLabel("(no editor for this type -- use the Raw Tables tab)")
+            w = QLabel("(для этого типа нет редактора -- используйте вкладку «Сырые таблицы»)")
             w.setStyleSheet("color: #888; font-style: italic;")
             return w
 
@@ -113,7 +113,7 @@ class AttributeEditorPanel(QWidget):
             return self._build_scalar_row(aid, atype, info)
         if info.mode == "struct":
             return self._build_struct_row(aid, atype, info)
-        w = QLabel("(unknown mode %r)" % info.mode)
+        w = QLabel("(неизвестный режим %r)" % info.mode)
         return w
 
     def _column_sql_type(self, info: TypeInfo, column: str) -> str:
@@ -198,7 +198,7 @@ class AttributeEditorPanel(QWidget):
         layout = QHBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
         spins = {}
-        for col, lbl in (("X", "X"), ("Y", "Y"), ("WIDTH", "W"), ("HEIGHT", "H")):
+        for col, lbl in (("X", "X"), ("Y", "Y"), ("WIDTH", "Ш"), ("HEIGHT", "В")):
             layout.addWidget(QLabel(lbl + ":"))
             sp = QDoubleSpinBox()
             sp.setRange(-100000, 100000)
@@ -221,8 +221,8 @@ class AttributeEditorPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         name_edit = QLineEdit(value.get("NAME") or "Dialog")
         name_edit.setFixedWidth(120)
-        bold = QCheckBox("Bold")
-        italic = QCheckBox("Italic")
+        bold = QCheckBox("Жирный")
+        italic = QCheckBox("Курсив")
         style = int(value.get("STYLE") or 0)
         bold.setChecked(bool(style & 1))
         italic.setChecked(bool(style & 2))
@@ -245,16 +245,16 @@ class AttributeEditorPanel(QWidget):
         italic.stateChanged.connect(lambda _=None: commit_style())
         size.editingFinished.connect(commit_size)
 
-        layout.addWidget(QLabel("Font:"))
+        layout.addWidget(QLabel("Шрифт:"))
         layout.addWidget(name_edit)
         layout.addWidget(bold)
         layout.addWidget(italic)
-        layout.addWidget(QLabel("Size:"))
+        layout.addWidget(QLabel("Размер:"))
         layout.addWidget(size)
         layout.addStretch(1)
         return box
 
-    _STATUS_LABELS = {0: "0 - Not started / normal"}
+    _STATUS_LABELS = {0: "0 - Не начато / обычный"}
 
     def _build_status_row(self, aid: int, value: dict) -> QWidget:
         box = QWidget()
@@ -263,9 +263,9 @@ class AttributeEditorPanel(QWidget):
         type_spin = QSpinBox()
         type_spin.setRange(-1000, 1000)
         type_spin.setValue(int(value.get("TYPE") or 0))
-        type_spin.setToolTip("Status TYPE code (0 = Not started / normal, seen on every "
-                              "ordinary box in the sample files; other values not "
-                              "catalogued -- see RAMUS_RSF_FORMAT.md section 8)")
+        type_spin.setToolTip("Код TYPE статуса (0 = Не начато / обычный, встречается на "
+                              "каждом обычном блоке в образцах файлов; прочие значения не "
+                              "каталогизированы -- см. RAMUS_RSF_FORMAT.md, раздел 8)")
         other = QLineEdit(value.get("OTHER_NAME") or "")
 
         def commit_type():
@@ -277,9 +277,9 @@ class AttributeEditorPanel(QWidget):
         type_spin.editingFinished.connect(commit_type)
         other.editingFinished.connect(commit_other)
 
-        layout.addWidget(QLabel("Type:"))
+        layout.addWidget(QLabel("Тип:"))
         layout.addWidget(type_spin)
-        layout.addWidget(QLabel("Other name:"))
+        layout.addWidget(QLabel("Другое имя:"))
         layout.addWidget(other)
         layout.addStretch(1)
         return box
@@ -293,18 +293,19 @@ class AttributeEditorPanel(QWidget):
             widget.editingFinished.connect(fn)
         elif hasattr(widget, "valueChanged"):
             widget.valueChanged.connect(lambda _=None: fn())
-        # bytes-widget (plain QWidget container) has no natural "commit"
-        # signal -- Import/Export/Clear buttons inside it mutate a shared
-        # dict directly; wire a periodic commit via focus-out isn't
-        # practical here, so bytes columns commit immediately on each
-        # button action instead (see field_widgets._make_bytes_widget).
+        # у байтового виджета (простой контейнер QWidget) нет естественного
+        # сигнала "commit" -- кнопки Импорт/Экспорт/Очистить внутри него
+        # напрямую изменяют общий словарь; подключать периодическую фиксацию
+        # через focus-out здесь непрактично, поэтому байтовые столбцы
+        # фиксируются немедленно при каждом действии кнопки (см.
+        # field_widgets._make_bytes_widget).
 
     def _build_list_row(self, aid: int, info: TypeInfo) -> QWidget:
         rows = self.model.get_value(self.element_id, aid)
         box = QWidget()
         layout = QHBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel("%d row(s) -- list-valued, edit in Raw Tables:" % len(rows)))
+        layout.addWidget(QLabel("строк: %d -- атрибут-список, редактируется в «Сырых таблицах»:" % len(rows)))
         btn = QPushButton(info.table_path.rsplit("/", 1)[-1])
         btn.clicked.connect(lambda: self.openTableRequested.emit(info.table_path))
         layout.addWidget(btn)
@@ -317,13 +318,13 @@ class AttributeEditorPanel(QWidget):
         layout = QHBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
         n = len(value) if value else 0
-        label = QLabel("<%d bytes>" % n if value else "(not set)")
+        label = QLabel("<%d байт>" % n if value else "(не задано)")
 
         def refresh_label(v):
-            label.setText("<%d bytes>" % len(v) if v else "(not set)")
+            label.setText("<%d байт>" % len(v) if v else "(не задано)")
 
         def do_import():
-            path, _ = QFileDialog.getOpenFileName(box, "Import file")
+            path, _ = QFileDialog.getOpenFileName(box, "Импорт файла")
             if not path:
                 return
             with open(path, "rb") as f:
@@ -335,9 +336,9 @@ class AttributeEditorPanel(QWidget):
         def do_export():
             v = self.model.get_value(self.element_id, aid)
             if not v:
-                QMessageBox.information(box, "Export", "Nothing to export.")
+                QMessageBox.information(box, "Экспорт", "Нечего экспортировать.")
                 return
-            path, _ = QFileDialog.getSaveFileName(box, "Export file")
+            path, _ = QFileDialog.getSaveFileName(box, "Экспорт файла")
             if not path:
                 return
             with open(path, "wb") as f:
@@ -358,9 +359,9 @@ class AttributeEditorPanel(QWidget):
                 refresh_label(data)
                 self._after_commit(aid)
 
-        import_btn = QPushButton("Import…")
-        export_btn = QPushButton("Export…")
-        clear_btn = QPushButton("Clear")
+        import_btn = QPushButton("Импорт…")
+        export_btn = QPushButton("Экспорт…")
+        clear_btn = QPushButton("Очистить")
         import_btn.clicked.connect(do_import)
         export_btn.clicked.connect(do_export)
         clear_btn.clicked.connect(do_clear)
@@ -369,7 +370,7 @@ class AttributeEditorPanel(QWidget):
         layout.addWidget(export_btn)
         layout.addWidget(clear_btn)
         if atype == ("Core", "HTMLText"):
-            edit_btn = QPushButton("Edit as text…")
+            edit_btn = QPushButton("Редактировать как текст…")
             edit_btn.clicked.connect(do_edit_text)
             layout.addWidget(edit_btn)
         layout.addStretch(1)
@@ -379,7 +380,7 @@ class AttributeEditorPanel(QWidget):
 class _TextEditDialog(QDialog):
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit stream content")
+        self.setWindowTitle("Редактирование содержимого потока")
         self.resize(600, 400)
         layout = QVBoxLayout(self)
         self.edit = QPlainTextEdit()

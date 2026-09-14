@@ -45,7 +45,7 @@ def rsf_hex_to_bytes(s: str) -> bytes:
     if not s:
         return b""
     if len(s) % 2 != 0:
-        raise ValueError("RSF hex-blob string has odd length: %r" % s)
+        raise ValueError("Строка hex-blob RSF имеет нечётную длину: %r" % s)
     out = bytearray(len(s) // 2)
     for i in range(0, len(s), 2):
         out[i // 2] = int(s[i:i + 2], 16) ^ 0x80
@@ -76,7 +76,7 @@ def parse_rsf_date(s: str) -> datetime:
             return datetime.strptime(s, pat)
         except ValueError:
             continue
-    raise ValueError("Unrecognised RSF timestamp: %r" % s)
+    raise ValueError("Нераспознанная временная метка RSF: %r" % s)
 
 
 def format_rsf_date(dt: datetime) -> str:
@@ -195,7 +195,7 @@ class Table:
         if t in _BLOB_TYPES:
             if isinstance(value, (bytes, bytearray)):
                 return bytes_to_rsf_hex(bytes(value))
-            raise TypeError("Expected bytes for column type %s" % sql_type)
+            raise TypeError("Для столбца типа %s ожидались байты" % sql_type)
         if t in _TIMESTAMP_TYPES:
             if isinstance(value, datetime):
                 return format_rsf_date(value)
@@ -379,5 +379,5 @@ class RsfArchive:
     def require_table(self, path: str) -> Table:
         t = self.tables.get(path)
         if t is None:
-            raise KeyError("table not present in this file: %s" % path)
+            raise KeyError("таблица отсутствует в этом файле: %s" % path)
         return t
